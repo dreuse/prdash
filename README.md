@@ -3,9 +3,7 @@
 A terminal board of your open GitHub pull requests across one or more repositories, plus a
 CI health screen.
 
-![prdash](docs/demo.gif)
-
-<sub>Static view: [docs/screenshot.svg](docs/screenshot.svg)</sub>
+![prdash](docs/screenshot.svg)
 
 ## Installation
 
