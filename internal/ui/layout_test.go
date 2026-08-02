@@ -10,7 +10,7 @@ func TestTruncateHandlesWideAndCombiningRunes(t *testing.T) {
 	}{
 		{"SQL idempotent", 20, "SQL idempotent"},
 		{"SQL idempotent", 8, "SQL ide…"},
-		{"Add category field to the ledger", 10, "Café do…"},
+		{"Café résumé importer", 10, "Café résu…"},
 		{"データベース移行", 16, "データベース移行"},
 		{"データベース移行", 8, "データ…"},
 		{"データベース移行", 7, "データ…"},
