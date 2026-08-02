@@ -453,8 +453,8 @@ func TestOpenTokenDetectsEachTrigger(t *testing.T) {
 		{"ship :roc", triggerEmoji, "roc", true},
 		{"#12", triggerReference, "12", true},
 		{"see #12", triggerReference, "12", true},
-		{"@alf", triggerMention, "jch", true},
-		{"cc @alf", triggerMention, "jch", true},
+		{"@jch", triggerMention, "jch", true},
+		{"cc @jch", triggerMention, "jch", true},
 		{"@", triggerMention, "", true},
 		{"a:b", 0, "", false},
 		{"mail@example", 0, "", false},
@@ -522,7 +522,7 @@ func TestReferenceCompletionMatchesOnTitle(t *testing.T) {
 	if len(m.comment.candidates) == 0 {
 		t.Fatal("a title fragment should find the pull request")
 	}
-	if m.comment.candidates[0].detail != "Make SQL migrations idempotent" {
+	if m.comment.candidates[0].detail != "Make migrations idempotent" {
 		t.Fatalf("got %q", m.comment.candidates[0].detail)
 	}
 }
@@ -530,10 +530,10 @@ func TestReferenceCompletionMatchesOnTitle(t *testing.T) {
 func TestMentionCompletionOffersRepoPeople(t *testing.T) {
 	m := testModel(t, 220, 40, ViewBoard)
 	m = press(m, "c")
-	m = press(m, "cc @alf")
+	m = press(m, "cc @jch")
 
 	if len(m.comment.candidates) == 0 {
-		t.Fatal("@alf should offer people")
+		t.Fatal("@jch should offer people")
 	}
 	if m.comment.candidates[0].insert != "@jchen" {
 		t.Fatalf("got %q, want @jchen", m.comment.candidates[0].insert)
@@ -566,7 +566,7 @@ func TestMentionCompletionFallsBackToPeopleInTheData(t *testing.T) {
 func TestMentionCompletionKeepsGithubCasing(t *testing.T) {
 	m := testModel(t, 220, 40, ViewBoard)
 	m = press(m, "c")
-	m = press(m, "@MDubois")
+	m = press(m, "@mdub")
 
 	if len(m.comment.candidates) == 0 {
 		t.Fatal("expected a match for MDubois")

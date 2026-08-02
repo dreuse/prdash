@@ -55,7 +55,7 @@ func TestFilterCompletesValues(t *testing.T) {
 
 	m = typeFilter(m, "jch")
 	if len(m.filterBar.candidates) == 0 {
-		t.Fatal("no login matched alf")
+		t.Fatal("no login matched jch")
 	}
 	if got := m.filterBar.candidates[0].insert; got != "assignee:jchen" {
 		t.Fatalf("got %q", got)

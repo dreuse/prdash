@@ -113,7 +113,7 @@ func (m *Mock) Fetch(context.Context) (Snapshot, error) {
 			Checks:  checks(15, 0, 0, 0),
 		},
 		{
-			Repo: mockRepo, Number: 12012, Title: "Make SQL migrations idempotent",
+			Repo: mockRepo, Number: 12012, Title: "Make migrations idempotent",
 			Author: MockViewer, CreatedAt: ago(day(6)), UpdatedAt: ago(30 * time.Minute),
 			Mergeable: model.MergeableYes, BaseRef: "master", HeadRef: "feature/sql-idempotent",
 			BehindBy: 19, Additions: 412, Deletions: 86, Changed: 14,

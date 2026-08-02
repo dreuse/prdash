@@ -307,7 +307,7 @@ func TestRepoPickerRemovesARepo(t *testing.T) {
 	m.scope = "acme/device-gateway"
 
 	m = openPicker(m)
-	m = typePicker(m, "other")
+	m = typePicker(m, "device")
 	entries := m.repoEntries()
 	if len(entries) == 0 {
 		t.Fatal("nothing to remove")

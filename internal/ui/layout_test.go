@@ -8,8 +8,8 @@ func TestTruncateHandlesWideAndCombiningRunes(t *testing.T) {
 		width int
 		want  string
 	}{
-		{"Make SQL migrations idempotent", 20, "Make SQL migrations idempotent"},
-		{"Make SQL migrations idempotent", 8, "SQL ide…"},
+		{"SQL idempotent", 20, "SQL idempotent"},
+		{"SQL idempotent", 8, "SQL ide…"},
 		{"Add category field to the ledger", 10, "Café do…"},
 		{"データベース移行", 16, "データベース移行"},
 		{"データベース移行", 8, "データ…"},

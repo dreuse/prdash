@@ -11,7 +11,7 @@ func samplePR() PullRequest {
 	return PullRequest{
 		Repo:               "acme/payments-api",
 		Number:             12012,
-		Title:              "Make SQL migrations idempotent",
+		Title:              "Make migrations idempotent",
 		Author:             "octodev",
 		HeadRef:            "feature/sql-idempotent",
 		CreatedAt:          daysAgo(6),
@@ -62,7 +62,7 @@ func TestFilterMatch(t *testing.T) {
 		want bool
 	}{
 		{"", true},
-		{"author:dreuse", true},
+		{"author:octodev", true},
 		{"author:@me", false},
 		{"author:any", true},
 		{"reviewer:@me", true},
@@ -83,9 +83,9 @@ func TestFilterMatch(t *testing.T) {
 		{"idempotent", true},
 		{"feature/sql", true},
 		{"nothing-like-this", false},
-		{"author:dreuse behind:>10", true},
-		{"author:dreuse behind:>50", false},
-		{"state:nonsense author:dreuse", true},
+		{"author:octodev behind:>10", true},
+		{"author:octodev behind:>50", false},
+		{"state:nonsense author:octodev", true},
 	}
 	for _, tc := range tests {
 		if got := ParseFilter(tc.raw).Match(pr, ctx); got != tc.want {
@@ -231,7 +231,7 @@ func TestAssigneeFilter(t *testing.T) {
 
 func TestFuzzyHandlesAccentedText(t *testing.T) {
 	pr := samplePR()
-	pr.Title = "Add category field to the ledger"
+	pr.Title = "Café résumé blocklist for São Paulo"
 	ctx := FilterContext{}
 
 	for _, q := range []string{"café", "Café", "blocklist", "cabl", "paulo"} {
@@ -256,7 +256,7 @@ func TestFuzzyMatchesPerFieldNotAcrossThem(t *testing.T) {
 
 	ctx := FilterContext{}
 	if !ParseFilter("idempo").Match(target, ctx) {
-		t.Fatal("idempo should match Make SQL migrations idempotent")
+		t.Fatal("idempo should match Make migrations idempotent")
 	}
 	if ParseFilter("idempo").Match(unrelated, ctx) {
 		t.Fatal("idempo must not match by stitching letters across separate fields")
@@ -278,7 +278,7 @@ func TestNegatedTokens(t *testing.T) {
 		{"is:draft", draft, true},
 		{"-is:draft", draft, false},
 		{"-is:draft", normal, true},
-		{"-author:dreuse", normal, false},
+		{"-author:octodev", normal, false},
 		{"-author:someone", normal, true},
 		{"-label:database", normal, false},
 		{"-label:nothing", normal, true},
@@ -328,7 +328,7 @@ func TestCommaSeparatedValuesAreOr(t *testing.T) {
 		{"label:bug,perf", false},
 		{"-label:bug,database", false},
 		{"is:draft,approved", false},
-		{"author:dreuse,someone", true},
+		{"author:octodev,someone", true},
 	}
 	for _, tc := range tests {
 		if got := ParseFilter(tc.query).Match(pr, ctx); got != tc.want {
@@ -340,15 +340,15 @@ func TestCommaSeparatedValuesAreOr(t *testing.T) {
 func TestQuotedPhrases(t *testing.T) {
 	ctx := FilterContext{}
 	pr := samplePR()
-	pr.Title = "Make SQL migrations idempotent para payments"
+	pr.Title = "Make migrations idempotent for payments"
 
-	if !ParseFilter(`"idempotent para"`).Match(pr, ctx) {
+	if !ParseFilter(`"idempotent for"`).Match(pr, ctx) {
 		t.Error("a quoted phrase should match across the space")
 	}
-	if f := ParseFilter(`"idempotent para"`); len(f.Tokens) != 1 {
+	if f := ParseFilter(`"idempotent for"`); len(f.Tokens) != 1 {
 		t.Errorf("a quoted phrase is one token, got %d", len(f.Tokens))
 	}
-	if ParseFilter(`"para idempotent"`).Match(pr, ctx) {
+	if ParseFilter(`"payments idempotent"`).Match(pr, ctx) {
 		t.Error("a quoted phrase must keep its word order")
 	}
 	if !ParseFilter(`-"nothing here"`).Match(pr, ctx) {
