@@ -2,20 +2,43 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/dreuse/prdash/internal/model"
 )
 
+func jsonUnmarshal(data []byte, dst any) error { return json.Unmarshal(data, dst) }
+
 type Snapshot struct {
+	Viewer       string
 	PullRequests []model.PullRequest
 	Runs         []model.WorkflowRun
+	Issues       []model.Issue
+	People       []model.User
 }
 
 type Fetcher interface {
 	Fetch(ctx context.Context) (Snapshot, error)
 }
+
+type Actor interface {
+	Approve(ctx context.Context, pr model.PullRequest) error
+	Comment(ctx context.Context, pr model.PullRequest, body string) error
+	Merge(ctx context.Context, pr model.PullRequest, method string) error
+	Close(ctx context.Context, pr model.PullRequest) error
+	Rerun(ctx context.Context, pr model.PullRequest) error
+	RerunRun(ctx context.Context, run model.WorkflowRun) error
+	UpdateBranch(ctx context.Context, pr model.PullRequest) error
+	RunLog(ctx context.Context, run model.WorkflowRun) ([]string, error)
+}
+
+const (
+	MergeSquash = "squash"
+	MergeMerge  = "merge"
+	MergeRebase = "rebase"
+)
 
 type Repo struct {
 	Owner string

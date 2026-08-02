@@ -3,74 +3,236 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os/exec"
-	"runtime"
+	"math/rand"
+	"sort"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
+	"github.com/dreuse/prdash/internal/config"
 	"github.com/dreuse/prdash/internal/github"
 	"github.com/dreuse/prdash/internal/model"
 	"github.com/dreuse/prdash/internal/readiness"
 )
 
 const (
-	DefaultRefreshInterval = 15 * time.Second
+	DefaultRefreshInterval = 30 * time.Second
+	unfocusedInterval      = 5 * time.Minute
 	rateLimitBackoff       = 60 * time.Second
 	fetchTimeout           = 45 * time.Second
+	actionTimeout          = 90 * time.Second
 	spinnerInterval        = 120 * time.Millisecond
+	toastLife              = 4 * time.Second
+	saveDebounce           = 300 * time.Millisecond
+	tickJitter             = 3 * time.Second
 )
 
-type view int
+type View int
 
 const (
-	viewBoard view = iota
-	viewDetail
-	viewActions
+	ViewBoard View = iota
+	ViewCI
 )
 
+var Views = []View{ViewBoard, ViewCI}
+
+func (v View) String() string {
+	if v == ViewCI {
+		return "ci"
+	}
+	return "board"
+}
+
+func (v View) Label() string {
+	if v == ViewCI {
+		return "CI"
+	}
+	return "Board"
+}
+
+func ViewBySlug(s string) View {
+	if strings.ToLower(s) == "ci" {
+		return ViewCI
+	}
+	return ViewBoard
+}
+
+type overlayKind int
+
+const (
+	ovSettings overlayKind = iota
+	ovHelp
+	ovConfirm
+	ovRepo
+)
+
+type toastKind int
+
+const (
+	toastInfo toastKind = iota
+	toastGood
+	toastBad
+)
+
+type toast struct {
+	text string
+	kind toastKind
+	gen  int
+}
+
+type confirmState struct {
+	title  string
+	body   string
+	verb   string
+	danger bool
+	run    func(Model) tea.Cmd
+}
+
+type Source func(repos []string) (github.Fetcher, github.Actor, error)
+
+type Options struct {
+	Fetcher   github.Fetcher
+	Actor     github.Actor
+	NewSource Source
+	Settings  config.Settings
+	State     config.State
+	Repos     []string
+	View      string
+	Cache     config.Cache
+	HasCache  bool
+}
+
 type Model struct {
-	fetcher  github.Fetcher
-	policy   readiness.Policy
-	interval time.Duration
+	fetcher github.Fetcher
+	actor   github.Actor
+	source  Source
+	policy  readiness.Policy
+	theme   Theme
+	keys    KeyMap
+
+	settings config.Settings
+	state    config.State
 	repos    []string
-	theme    Theme
 
 	width, height int
-	view          view
-	col, row      int
-	runRow        int
+	view          View
+	stack         []overlayKind
 
-	groups map[model.Column][]model.PullRequest
+	prs    []model.PullRequest
 	runs   []model.WorkflowRun
+	issues []model.Issue
+	people []model.User
+	viewer string
+	emoji  EmojiSet
 
+	order   []model.Column
+	lanes   map[model.Column][]model.PullRequest
+	laneIdx int
+	sel     model.Key
+	split   bool
+
+	scope     string
+	sortMode  model.SortMode
+	filter    model.Filter
+	filterBar filterBar
+	comment   commentBar
+
+	expanded map[string]bool
+
+	ciRow          int
+	ciSel          int64
+	ciFailuresOnly bool
+	logs           logPane
+
+	confirm  confirmState
+	panel    settingsUI
+	repoPick repoPicker
+
+	pending     map[model.Key]string
+	toast       toast
+	toastGen    int
+	spinnerStep int
 	loading     bool
 	loadedOnce  bool
+	stale       bool
+	focused     bool
 	err         error
 	rateLimited bool
 	lastUpdate  time.Time
-	notice      string
-
 	tickGen     int
-	spinnerStep int
+	saveGen     int
+	emojiFresh  bool
 }
 
-func New(f github.Fetcher, policy readiness.Policy, interval time.Duration, repos []string) Model {
-	if interval <= 0 {
-		interval = DefaultRefreshInterval
-	}
-	return Model{
-		fetcher:  f,
-		policy:   policy,
-		interval: interval,
-		repos:    repos,
-		theme:    NewTheme(),
+func New(o Options) Model {
+	s := o.Settings
+	m := Model{
+		fetcher:  o.Fetcher,
+		actor:    o.Actor,
+		source:   o.NewSource,
+		policy:   readiness.Policy{RequiredApprovals: s.RequiredApprovals, BehindBlocks: s.BehindBlocks},
+		theme:    NewTheme(s.Theme, s.ASCII),
+		keys:     DefaultKeyMap(),
+		settings: s,
+		state:    o.State,
+		repos:    o.Repos,
+		expanded: map[string]bool{},
+		pending:  map[model.Key]string{},
+		logs:     logPane{cache: map[int64][]string{}},
 		loading:  true,
-		groups:   policy.Group(nil),
+		focused:  true,
+		lanes:    map[model.Column][]model.PullRequest{},
 	}
+
+	m.view = ViewBySlug(s.DefaultView)
+	if s.RememberLastView && o.State.LastView != "" {
+		m.view = ViewBySlug(o.State.LastView)
+	}
+	if o.View != "" {
+		m.view = ViewBySlug(o.View)
+	}
+
+	m.ciFailuresOnly = s.CIFailuresOnly
+	m.sortMode, _ = model.SortModeBySlug(s.Sort)
+	if mode, ok := model.SortModeBySlug(o.State.Sort); ok {
+		m.sortMode = mode
+	}
+
+	raw := s.StartupFilter
+	if o.State.Filter != "" {
+		raw = o.State.Filter
+	}
+	m.filter = model.ParseFilter(raw)
+
+	m.filterBar = newFilterBar(m.theme)
+	m.filterBar.input.SetValue(raw)
+
+	m.scope = o.State.Scope
+	if o.State.SelectPR != 0 {
+		m.sel = model.Key{Repo: o.State.SelectRepo, Number: o.State.SelectPR}
+	}
+
+	if o.HasCache {
+		m.prs = o.Cache.PullRequests
+		m.runs = o.Cache.Runs
+		m.issues = o.Cache.Issues
+		m.people = o.Cache.People
+		m.viewer = o.Cache.Viewer
+		m.lastUpdate = o.Cache.FetchedAt
+		m.loadedOnce = true
+		m.stale = true
+	}
+	m.panel = newSettingsUI()
+	m.comment = newCommentBar(m.theme)
+
+	m.emoji = NewEmojiSet()
+	if cached, ok := config.LoadEmoji(); ok {
+		m.emoji = NewEmojiSet(cached.Emoji)
+		m.emojiFresh = !cached.Stale()
+	}
+	m.rebuild()
+	return m
 }
 
 type dataMsg struct {
@@ -82,10 +244,50 @@ type tickMsg struct{ gen int }
 
 type spinnerMsg struct{}
 
-type noticeMsg struct{ text string }
+type toastMsg struct {
+	text string
+	kind toastKind
+}
+
+type clearToastMsg struct{ gen int }
+
+type actionMsg struct {
+	key  model.Key
+	verb string
+	err  error
+	pr   model.PullRequest
+}
+
+type persistMsg struct{ gen int }
+
+type resetSettingsMsg struct{}
+
+type emojiMsg struct{ set map[string]string }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.fetchCmd(), m.scheduleTick(), spinnerTick())
+	cmds := []tea.Cmd{m.fetchCmd(), m.scheduleTick(), spinnerTick()}
+	if !m.emojiFresh {
+		cmds = append(cmds, m.fetchEmojiCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m Model) fetchEmojiCmd() tea.Cmd {
+	source, ok := m.fetcher.(interface {
+		Emoji(context.Context) (map[string]string, error)
+	})
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+		defer cancel()
+		set, err := source.Emoji(ctx)
+		if err != nil {
+			return nil
+		}
+		return emojiMsg{set: set}
+	}
 }
 
 func (m Model) fetchCmd() tea.Cmd {
@@ -98,26 +300,90 @@ func (m Model) fetchCmd() tea.Cmd {
 	}
 }
 
-func (m Model) scheduleTick() tea.Cmd {
-	gen := m.tickGen
-	d := m.interval
+func (m Model) baseInterval() time.Duration {
+	d := m.settings.Interval()
+	if d <= 0 {
+		d = DefaultRefreshInterval
+	}
+	return d
+}
+
+func (m Model) interval() time.Duration {
+	d := m.baseInterval()
+	if !m.focused {
+		d = unfocusedInterval
+	}
 	if m.rateLimited && d < rateLimitBackoff {
 		d = rateLimitBackoff
 	}
-	return tea.Tick(d, func(time.Time) tea.Msg { return tickMsg{gen: gen} })
+	return d + time.Duration(rand.Int63n(int64(tickJitter)))
+}
+
+func (m Model) dueForRefresh() bool {
+	return m.lastUpdate.IsZero() || time.Since(m.lastUpdate) >= m.baseInterval()
+}
+
+func (m Model) refresh() (tea.Model, tea.Cmd) {
+	m.loading = true
+	m.tickGen++
+	return m, tea.Batch(m.fetchCmd(), m.scheduleTick())
+}
+
+func (m Model) scheduleTick() tea.Cmd {
+	gen := m.tickGen
+	return tea.Tick(m.interval(), func(time.Time) tea.Msg { return tickMsg{gen: gen} })
 }
 
 func spinnerTick() tea.Cmd {
 	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg { return spinnerMsg{} })
 }
 
-func (m Model) now() time.Time { return time.Now() }
+func (m Model) notify(text string, kind toastKind) tea.Cmd {
+	return func() tea.Msg { return toastMsg{text: text, kind: kind} }
+}
+
+func (m *Model) persist() tea.Cmd {
+	m.saveGen++
+	gen := m.saveGen
+	return tea.Tick(saveDebounce, func(time.Time) tea.Msg { return persistMsg{gen: gen} })
+}
+
+func (m Model) writeStores() {
+	_ = config.SaveSettings(m.settings)
+	st := m.state
+	st.LastView = m.view.String()
+	st.Filter = m.filter.Raw
+	st.Sort = m.sortMode.String()
+	st.Scope = m.scope
+	st.SelectRepo = m.sel.Repo
+	st.SelectPR = m.sel.Number
+	_ = config.SaveState(st)
+}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		return m, nil
+		return m.resize()
+
+	case tea.FocusMsg:
+		if m.focused {
+			return m, nil
+		}
+		m.focused = true
+		if m.dueForRefresh() {
+			return m.refresh()
+		}
+		m.tickGen++
+		return m, m.scheduleTick()
+
+	case tea.BlurMsg:
+		if !m.focused {
+			return m, nil
+		}
+		m.focused = false
+		m.tickGen++
+		return m, m.scheduleTick()
 
 	case spinnerMsg:
 		m.spinnerStep++
@@ -130,22 +396,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, tea.Batch(m.fetchCmd(), m.scheduleTick())
 
-	case noticeMsg:
-		m.notice = msg.text
-		return m, nil
-
-	case dataMsg:
-		m.loading = false
-		m.err = msg.err
-		m.rateLimited = isRateLimit(msg.err)
-		if msg.err == nil || len(msg.snapshot.PullRequests) > 0 || len(msg.snapshot.Runs) > 0 {
-			m.groups = m.policy.Group(msg.snapshot.PullRequests)
-			m.runs = msg.snapshot.Runs
-			m.loadedOnce = true
-			m.lastUpdate = time.Now()
-			m.clampSelection()
+	case persistMsg:
+		if msg.gen == m.saveGen {
+			m.writeStores()
 		}
 		return m, nil
+
+	case toastMsg:
+		m.toastGen++
+		m.toast = toast{text: msg.text, kind: msg.kind, gen: m.toastGen}
+		gen := m.toastGen
+		return m, tea.Tick(toastLife, func(time.Time) tea.Msg { return clearToastMsg{gen: gen} })
+
+	case clearToastMsg:
+		if msg.gen == m.toast.gen {
+			m.toast = toast{}
+		}
+		return m, nil
+
+	case emojiMsg:
+		if len(msg.set) == 0 {
+			return m, nil
+		}
+		m.emoji = NewEmojiSet(msg.set)
+		m.emojiFresh = true
+		return m, saveEmojiCmd(config.EmojiSet{FetchedAt: time.Now(), Emoji: msg.set})
+
+	case dataMsg:
+		return m.applyData(msg)
+
+	case logLoadMsg:
+		return m.applyLogLoad(msg)
+
+	case logsMsg:
+		return m.applyLogs(msg)
+
+	case actionMsg:
+		return m.applyAction(msg)
+
+	case resetSettingsMsg:
+		repos := m.settings.Repos
+		m.settings = config.DefaultSettings()
+		m.settings.Repos = repos
+		m.panel.idx = 0
+		mm, cmd := m.applySettings()
+		return mm, tea.Batch(cmd, m.notify("settings reset to defaults", toastGood))
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -153,269 +448,314 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "ctrl+c":
-		return m, tea.Quit
+func (m Model) applyData(msg dataMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	m.err = msg.err
+	m.rateLimited = isRateLimit(msg.err)
 
-	case "r":
-		m.loading = true
-		m.notice = ""
-		m.tickGen++
-		return m, tea.Batch(m.fetchCmd(), m.scheduleTick())
-
-	case "tab", "a":
-		if m.view == viewActions {
-			m.view = viewBoard
-		} else {
-			m.view = viewActions
+	if msg.err == nil || len(msg.snapshot.PullRequests) > 0 {
+		m.prs = msg.snapshot.PullRequests
+		m.runs = msg.snapshot.Runs
+		m.issues = msg.snapshot.Issues
+		m.people = peopleFrom(msg.snapshot.PullRequests, msg.snapshot.People)
+		if msg.snapshot.Viewer != "" {
+			m.viewer = msg.snapshot.Viewer
 		}
-		return m, nil
+		m.loadedOnce = true
+		m.stale = msg.err != nil
+		m.lastUpdate = time.Now()
 
-	case "enter":
-		if m.view == viewBoard {
-			if _, ok := m.selectedPR(); ok {
-				m.view = viewDetail
-			}
+		if fixed := canonicalRepos(m.settings.Repos, m.prs); !sameStrings(fixed, m.settings.Repos) {
+			m.settings.Repos = fixed
+			m.repos = fixed
 		}
-		return m, nil
-
-	case "esc":
-		if m.view != viewBoard {
-			m.view = viewBoard
+		if scoped := canonicalRepos([]string{m.scope}, m.prs); m.scope != "" && scoped[0] != m.scope {
+			m.scope = scoped[0]
 		}
-		return m, nil
-
-	case "o":
-		return m, m.openSelected()
-
-	case "?":
-		m.notice = ""
-		return m, nil
+		m.rebuild()
+		return m, saveCacheCmd(config.Cache{
+			FetchedAt:    m.lastUpdate,
+			Viewer:       m.viewer,
+			PullRequests: append([]model.PullRequest(nil), m.prs...),
+			Runs:         append([]model.WorkflowRun(nil), m.runs...),
+			Issues:       append([]model.Issue(nil), m.issues...),
+			People:       append([]model.User(nil), m.people...),
+		})
 	}
-
-	switch m.view {
-	case viewActions:
-		return m.moveActions(msg.String()), nil
-	case viewBoard:
-		return m.moveBoard(msg.String()), nil
+	m.stale = true
+	if msg.err != nil && m.loadedOnce {
+		return m, m.notify(m.theme.Glyphs.Fail+" refresh failed: "+firstLine(msg.err.Error()), toastBad)
 	}
 	return m, nil
 }
 
-func (m Model) moveBoard(key string) Model {
-	switch key {
-	case "left", "h":
-		m.col = wrap(m.col-1, len(model.Columns))
-		m.row = 0
-	case "right", "l":
-		m.col = wrap(m.col+1, len(model.Columns))
-		m.row = 0
-	case "up", "k":
-		if m.row > 0 {
-			m.row--
-		}
-	case "down", "j":
-		if n := len(m.groups[model.Columns[m.col]]); m.row < n-1 {
-			m.row++
-		}
-	case "g", "home":
-		m.row = 0
-	case "G", "end":
-		m.row = maxInt(0, len(m.groups[model.Columns[m.col]])-1)
+func saveCacheCmd(c config.Cache) tea.Cmd {
+	return func() tea.Msg {
+		_ = config.SaveCache(c)
+		return nil
 	}
-	m.clampSelection()
-	return m
 }
 
-func (m Model) moveActions(key string) Model {
-	n := len(m.runs)
-	switch key {
-	case "up", "k":
-		if m.runRow > 0 {
-			m.runRow--
-		}
-	case "down", "j":
-		if m.runRow < n-1 {
-			m.runRow++
-		}
-	case "g", "home":
-		m.runRow = 0
-	case "G", "end":
-		m.runRow = maxInt(0, n-1)
+func saveEmojiCmd(e config.EmojiSet) tea.Cmd {
+	return func() tea.Msg {
+		_ = config.SaveEmoji(e)
+		return nil
 	}
-	return m
+}
+
+func (m Model) resize() (tea.Model, tea.Cmd) {
+	m.rebuild()
+	return m, nil
+}
+
+func (m *Model) rebuild() {
+	m.policy = readiness.Policy{
+		RequiredApprovals: m.settings.RequiredApprovals,
+		BehindBlocks:      m.settings.BehindBlocks,
+	}
+	m.order = m.laneOrder()
+
+	visible := make([]model.PullRequest, 0, len(m.prs))
+	for _, pr := range m.prs {
+		if !m.inScope(pr.Repo) {
+			continue
+		}
+		ctx := model.FilterContext{Viewer: m.viewer, Column: m.policy.Classify(pr)}
+		if m.filter.Match(pr, ctx) {
+			visible = append(visible, pr)
+		}
+	}
+
+	m.lanes = m.policy.Group(visible)
+	for col := range m.lanes {
+		model.Sort(m.lanes[col], m.sortMode, m.viewer, m.policy.RequiredApprovals)
+	}
+	m.clampSelection()
+}
+
+func (m Model) scopeLabel() string {
+	if m.scope == "" {
+		if names := m.repoNames(); len(names) == 1 {
+			return shortRepo(names[0])
+		}
+		return "all repos"
+	}
+	return shortRepo(m.scope)
+}
+
+func (m Model) laneOrder() []model.Column {
+	base := model.ActionFirstColumns
+	if m.settings.LaneOrder == "pipeline" {
+		base = model.PipelineColumns
+	}
+	hidden := map[model.Column]bool{}
+	for _, slug := range m.settings.HiddenLanes {
+		if c, ok := model.ColumnBySlug(slug); ok {
+			hidden[c] = true
+		}
+	}
+	out := make([]model.Column, 0, len(base))
+	for _, c := range base {
+		if !hidden[c] {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return base
+	}
+	return out
 }
 
 func (m *Model) clampSelection() {
-	if m.col < 0 || m.col >= len(model.Columns) {
-		m.col = 0
+	m.laneIdx = clamp(m.laneIdx, 0, maxInt(0, len(m.order)-1))
+	if !m.selectionVisible() {
+		m.selectFirst()
 	}
-	n := len(m.groups[model.Columns[m.col]])
-	if m.row >= n {
-		m.row = maxInt(0, n-1)
-	}
-	if m.row < 0 {
-		m.row = 0
-	}
-	if m.runRow >= len(m.runs) {
-		m.runRow = maxInt(0, len(m.runs)-1)
-	}
+	m.syncLaneToSelection()
+	m.clampCIRow()
 }
 
-func (m Model) openSelected() tea.Cmd {
-	var url string
-	switch m.view {
-	case viewActions:
-		runs := m.orderedRuns()
-		if m.runRow >= 0 && m.runRow < len(runs) {
-			url = runs[m.runRow].URL
-		}
-	default:
-		if pr, ok := m.selectedPR(); ok {
-			url = pr.URL
+func (m *Model) clampCIRow() {
+	rows := m.ciRows()
+	if m.ciSel != 0 {
+		for i, r := range rows {
+			if r.ID == m.ciSel {
+				m.ciRow = i
+				break
+			}
 		}
 	}
-	if url == "" {
-		return func() tea.Msg { return noticeMsg{text: "nothing selected to open"} }
+	m.ciRow = clamp(m.ciRow, 0, maxInt(0, len(rows)-1))
+	if m.ciRow < len(rows) {
+		m.ciSel = rows[m.ciRow].ID
 	}
-	return func() tea.Msg {
-		if err := openBrowser(url); err != nil {
-			return noticeMsg{text: "could not open browser: " + err.Error()}
+}
+
+func (m Model) selectionVisible() bool {
+	if m.sel.Zero() {
+		return false
+	}
+	for _, prs := range m.lanes {
+		for _, pr := range prs {
+			if pr.Key() == m.sel {
+				return true
+			}
 		}
-		return noticeMsg{text: "opened " + url}
+	}
+	return false
+}
+
+func (m *Model) selectFirst() {
+	for _, col := range m.order {
+		if prs := m.lanes[col]; len(prs) > 0 {
+			m.sel = prs[0].Key()
+			return
+		}
+	}
+	m.sel = model.Key{}
+}
+
+func (m *Model) syncLaneToSelection() {
+	if m.sel.Zero() {
+		return
+	}
+	for i, col := range m.order {
+		for _, pr := range m.lanes[col] {
+			if pr.Key() == m.sel {
+				m.laneIdx = i
+				return
+			}
+		}
 	}
 }
 
-func openBrowser(url string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", url)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	default:
-		cmd = exec.Command("xdg-open", url)
+func (m Model) currentLane() []model.PullRequest {
+	if len(m.order) == 0 {
+		return nil
 	}
-	return cmd.Start()
+	return m.lanes[m.order[clamp(m.laneIdx, 0, len(m.order)-1)]]
 }
 
-func (m Model) View() string {
-	if m.width <= 0 || m.height <= 0 {
-		return ""
+func (m Model) laneRow() int {
+	for i, pr := range m.currentLane() {
+		if pr.Key() == m.sel {
+			return i
+		}
 	}
-
-	header := m.renderHeader()
-	footer := m.renderFooter()
-	bodyHeight := maxInt(1, m.height-lipgloss.Height(header)-lipgloss.Height(footer))
-
-	var body string
-	switch {
-	case !m.loadedOnce && m.err != nil:
-		body = m.renderFatal()
-	case !m.loadedOnce:
-		body = m.renderLoading(bodyHeight)
-	case m.view == viewDetail:
-		body = m.renderDetail(bodyHeight)
-	case m.view == viewActions:
-		body = m.renderActions(bodyHeight)
-	default:
-		body = m.renderBoard(bodyHeight)
-	}
-
-	return m.fitScreen(header, body, footer)
+	return 0
 }
 
-func (m Model) fitScreen(header, body, footer string) string {
-	clamp := lipgloss.NewStyle().MaxWidth(m.width)
-	header, footer = clamp.Render(header), clamp.Render(footer)
-
-	free := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
-	body = lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(maxInt(1, free)).Render(body)
-
-	lines := strings.Split(body, "\n")
-	for len(lines) < free {
-		lines = append(lines, "")
+func (m Model) selectedPR() (model.PullRequest, bool) {
+	if m.sel.Zero() {
+		return model.PullRequest{}, false
 	}
-
-	all := append(strings.Split(header, "\n"), lines...)
-	all = append(all, strings.Split(footer, "\n")...)
-	if len(all) > m.height {
-		all = all[:m.height]
+	for _, col := range m.order {
+		for _, pr := range m.lanes[col] {
+			if pr.Key() == m.sel {
+				return pr, true
+			}
+		}
 	}
-	return strings.Join(all, "\n")
+	return model.PullRequest{}, false
 }
 
-func (m Model) renderHeader() string {
-	title := m.theme.Title.Render("prdash")
-	repos := m.theme.Dim.Render(strings.Join(m.repos, "  "))
-
-	var right string
-	switch {
-	case m.loading:
-		right = m.theme.Status.Render(m.spinnerFrame() + " refreshing")
-	case m.rateLimited:
-		right = m.theme.StatusWarn.Render(fmt.Sprintf("%s rate limited, retrying in %s",
-			m.theme.Icons.Conflict, rateLimitBackoff))
-	case m.err != nil:
-		right = m.theme.StatusError.Render(m.theme.Icons.Failed + " " + truncate(m.err.Error(), 60))
-	case !m.lastUpdate.IsZero():
-		right = m.theme.Status.Render(fmt.Sprintf("updated %s ago", model.ShortAge(time.Since(m.lastUpdate))))
+func (m Model) prByBranch(repo, branch string) (model.PullRequest, bool) {
+	for _, pr := range m.prs {
+		if pr.Repo == repo && pr.HeadRef == branch {
+			return pr, true
+		}
 	}
-
-	left := title + "  " + repos
-	gap := maxInt(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
-	return left + strings.Repeat(" ", gap) + right
+	return model.PullRequest{}, false
 }
 
-func (m Model) renderFooter() string {
-	var keys string
-	switch m.view {
-	case viewDetail:
-		keys = m.joinKeys("esc back", "o open", "r refresh", "q quit")
-	case viewActions:
-		keys = m.joinKeys("j/k move", "tab board", "o open", "r refresh", "q quit")
-	default:
-		keys = m.joinKeys("h/j/k/l move", "enter details", "tab actions", "o open", "r refresh", "q quit")
+func (m Model) multiRepo() bool {
+	seen := map[string]struct{}{}
+	for _, pr := range m.prs {
+		seen[pr.Repo] = struct{}{}
+		if len(seen) > 1 {
+			return true
+		}
 	}
-	if lipgloss.Width(keys) > m.width {
-		keys = m.joinKeys("move", "enter", "tab", "o", "r", "q")
-	}
-	line := m.theme.Help.Render(keys)
-	if m.notice != "" {
-		line = m.theme.Status.Render(truncate(m.notice, maxInt(10, m.width))) + "\n" + line
-	} else if m.err != nil && m.loadedOnce {
-		line = m.theme.StatusError.Render(truncate("error: "+m.err.Error(), maxInt(10, m.width))) + "\n" + line
-	}
-	return line
+	return false
 }
 
-func (m Model) renderLoading(height int) string {
-	msg := fmt.Sprintf("%s loading pull requests from %s", m.spinnerFrame(), strings.Join(m.repos, ", "))
-	return lipgloss.Place(m.width, height, lipgloss.Center, lipgloss.Center, m.theme.Status.Render(msg))
+func (m Model) repoNames() []string {
+	seen := map[string]int{}
+	var out []string
+	add := func(name string) {
+		if name == "" {
+			return
+		}
+		key := strings.ToLower(name)
+		if i, ok := seen[key]; ok {
+			out[i] = name
+			return
+		}
+		seen[key] = len(out)
+		out = append(out, name)
+	}
+	for _, r := range m.repos {
+		add(r)
+	}
+	for _, pr := range m.prs {
+		add(pr.Repo)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i]) < strings.ToLower(out[j])
+	})
+	return out
 }
 
-func (m Model) renderFatal() string {
-	var b strings.Builder
-	b.WriteString(m.theme.StatusError.Render(m.theme.Icons.Failed + " could not load data"))
-	b.WriteString("\n\n")
-	b.WriteString(m.err.Error())
-	b.WriteString("\n\n")
+func (m Model) inScope(repo string) bool {
+	return m.scope == "" || strings.EqualFold(m.scope, repo)
+}
 
-	var ghErr *github.Error
-	switch {
-	case errors.As(m.err, &ghErr) && ghErr.Auth:
-		b.WriteString(m.theme.Status.Render("run `gh auth login` and try again"))
-	case errors.As(m.err, &ghErr) && ghErr.RateLimit:
-		b.WriteString(m.theme.Status.Render("github rate limit hit; the dashboard will retry automatically"))
-	default:
-		b.WriteString(m.theme.Status.Render("press r to retry, q to quit"))
+func canonicalRepos(tracked []string, prs []model.PullRequest) []string {
+	canonical := make(map[string]string, len(prs))
+	for _, pr := range prs {
+		canonical[strings.ToLower(pr.Repo)] = pr.Repo
 	}
-	return b.String()
+
+	seen := make(map[string]bool, len(tracked))
+	out := make([]string, 0, len(tracked))
+	for _, name := range tracked {
+		key := strings.ToLower(name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if fixed, ok := canonical[key]; ok {
+			name = fixed
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+func (m Model) overlay() (overlayKind, bool) {
+	if len(m.stack) == 0 {
+		return 0, false
+	}
+	return m.stack[len(m.stack)-1], true
+}
+
+func (m *Model) push(o overlayKind) {
+	for _, existing := range m.stack {
+		if existing == o {
+			return
+		}
+	}
+	m.stack = append(m.stack, o)
+}
+
+func (m *Model) pop() {
+	if len(m.stack) > 0 {
+		m.stack = m.stack[:len(m.stack)-1]
+	}
 }
 
 func (m Model) spinnerFrame() string {
-	frames := m.theme.Icons.Spinner
+	frames := m.theme.Glyphs.Spinner
 	return frames[m.spinnerStep%len(frames)]
 }
 
@@ -424,16 +764,9 @@ func isRateLimit(err error) bool {
 	return errors.As(err, &ghErr) && ghErr.RateLimit
 }
 
-func wrap(i, n int) int {
-	if n == 0 {
-		return 0
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
 	}
-	return ((i % n) + n) % n
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	return s
 }
