@@ -9,27 +9,27 @@ import (
 	"github.com/dreuse/prdash/internal/model"
 )
 
-func TestLogArgsPrefersFailedStepsForFailedRuns(t *testing.T) {
+func TestLogArgsIsolatesTheFailingSteps(t *testing.T) {
 	run := model.WorkflowRun{ID: 42, Repo: "acme/api", Status: "completed", Conclusion: "failure"}
-	args := strings.Join(logArgs(run), " ")
+	args := strings.Join(logArgs(run, true), " ")
 
 	if !strings.Contains(args, "--log-failed") {
-		t.Errorf("a failed run should fetch only the failing steps, got %q", args)
+		t.Errorf("failing-steps mode should ask gh for just those, got %q", args)
 	}
 	if !strings.Contains(args, "42") || !strings.Contains(args, "acme/api") {
 		t.Errorf("the run id and repo must reach gh, got %q", args)
 	}
 }
 
-func TestLogArgsFetchesWholeLogForSuccessfulRuns(t *testing.T) {
-	run := model.WorkflowRun{ID: 7, Repo: "acme/api", Status: "completed", Conclusion: "success"}
-	args := strings.Join(logArgs(run), " ")
+func TestLogArgsCanAskForTheWholeLog(t *testing.T) {
+	run := model.WorkflowRun{ID: 42, Repo: "acme/api", Status: "completed", Conclusion: "failure"}
+	args := strings.Join(logArgs(run, false), " ")
 
 	if strings.Contains(args, "--log-failed") {
-		t.Errorf("a successful run has no failing steps to isolate, got %q", args)
+		t.Errorf("full mode must not narrow to the failing steps, got %q", args)
 	}
 	if !strings.Contains(args, "--log") {
-		t.Errorf("a successful run should still fetch its log, got %q", args)
+		t.Errorf("full mode should still fetch the log, got %q", args)
 	}
 }
 
@@ -37,9 +37,10 @@ func TestRunLogRefusesRunsStillInProgress(t *testing.T) {
 	c := &CLI{}
 	run := model.WorkflowRun{ID: 1, Repo: "acme/api", Status: "in_progress"}
 
-	_, err := c.RunLog(context.Background(), run)
-	if !errors.Is(err, ErrLogsNotReady) {
-		t.Fatalf("github serves no logs before a job finishes, want ErrLogsNotReady, got %v", err)
+	for _, failedOnly := range []bool{true, false} {
+		if _, err := c.RunLog(context.Background(), run, failedOnly); !errors.Is(err, ErrLogsNotReady) {
+			t.Fatalf("github serves no logs before a job finishes, want ErrLogsNotReady, got %v", err)
+		}
 	}
 }
 

@@ -27,7 +27,7 @@ func (m *Mock) Rerun(context.Context, model.PullRequest) error           { retur
 func (m *Mock) RerunRun(context.Context, model.WorkflowRun) error        { return nil }
 func (m *Mock) UpdateBranch(context.Context, model.PullRequest) error    { return nil }
 
-func (m *Mock) RunLog(_ context.Context, run model.WorkflowRun) ([]string, error) {
+func (m *Mock) RunLog(_ context.Context, run model.WorkflowRun, failedOnly bool) ([]string, error) {
 	if run.InProgress() {
 		return nil, ErrLogsNotReady
 	}
@@ -40,19 +40,27 @@ func (m *Mock) RunLog(_ context.Context, run model.WorkflowRun) ([]string, error
 		step = "Run tests"
 	}
 
+	tail := []string{job + "\t" + step + "\tBUILD SUCCESS"}
+	if run.Failed() {
+		tail = []string{
+			job + "\t" + step + "\tERROR Migration V42__add_company_index.sql failed",
+			job + "\t" + step + "\tERROR SQL State  : 42S01",
+			job + "\t" + step + "\tERROR Message    : Table 'company_item' already exists",
+			job + "\t" + step + "\tProcess completed with exit code 1",
+		}
+	}
+	if failedOnly {
+		if !run.Failed() {
+			return nil, nil
+		}
+		return tail, nil
+	}
+
 	lines := make([]string, 0, 64)
 	for i := 0; i < 48; i++ {
 		lines = append(lines, job+"\t"+step+"\t"+mockLogNoise[i%len(mockLogNoise)])
 	}
-	if !run.Failed() {
-		return append(lines, job+"\t"+step+"\tBUILD SUCCESS"), nil
-	}
-	return append(lines,
-		job+"\t"+step+"\tERROR Migration V42__add_company_index.sql failed",
-		job+"\t"+step+"\tERROR SQL State  : 42S01",
-		job+"\t"+step+"\tERROR Message    : Table 'company_item' already exists",
-		job+"\t"+step+"\tProcess completed with exit code 1",
-	), nil
+	return append(lines, tail...), nil
 }
 
 var mockLogNoise = []string{

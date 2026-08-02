@@ -31,7 +31,7 @@ type Actor interface {
 	Rerun(ctx context.Context, pr model.PullRequest) error
 	RerunRun(ctx context.Context, run model.WorkflowRun) error
 	UpdateBranch(ctx context.Context, pr model.PullRequest) error
-	RunLog(ctx context.Context, run model.WorkflowRun) ([]string, error)
+	RunLog(ctx context.Context, run model.WorkflowRun, failedOnly bool) ([]string, error)
 }
 
 const (

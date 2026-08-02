@@ -18,11 +18,11 @@ func loadedLogs(t *testing.T, m Model) Model {
 	m = out.(Model)
 
 	run := m.logs.run
-	lines, err := m.actor.RunLog(t.Context(), run)
+	lines, err := m.actor.RunLog(t.Context(), run, m.logs.failedOnly)
 	if err != nil {
 		t.Fatalf("the mock refused to produce logs: %v", err)
 	}
-	out, _ = m.Update(logsMsg{runID: run.ID, lines: lines})
+	out, _ = m.Update(logsMsg{key: m.logs.key(), lines: lines})
 	return out.(Model)
 }
 
@@ -203,7 +203,7 @@ func TestLogsForAnotherRunAreCachedButNotShown(t *testing.T) {
 	m := loadedLogs(t, testModel(t, 200, 60, ViewCI))
 	shown := m.logs.run.ID
 
-	out, _ := m.Update(logsMsg{runID: shown + 12345, lines: []string{"unrelated"}})
+	out, _ := m.Update(logsMsg{key: logKey{run: shown + 12345}, lines: []string{"unrelated"}})
 	m = out.(Model)
 
 	if len(m.logs.lines) == 1 && m.logs.lines[0] == "unrelated" {
@@ -250,5 +250,149 @@ func TestMovingTheCursorRebindsTheLogPane(t *testing.T) {
 	}
 	if m.logs.run.ID != m.ciRows()[m.ciRow].ID {
 		t.Error("the pane is bound to a run that is not selected")
+	}
+}
+
+func failingRunModel(t *testing.T) Model {
+	t.Helper()
+	m := testModel(t, 200, 60, ViewCI)
+	for i, r := range m.ciRows() {
+		if r.Failed() {
+			m.ciRow = i
+			m.ciSel = r.ID
+			return m
+		}
+	}
+	t.Fatal("the mock should contain a failed run")
+	return m
+}
+
+func TestLogPaneOpensAFailedRunOnItsFailingSteps(t *testing.T) {
+	m := loadedLogs(t, failingRunModel(t))
+
+	if !m.logs.failedOnly {
+		t.Fatal("a failed run should open showing only what failed")
+	}
+	if !strings.Contains(stripANSI(m.View()), "failing steps") {
+		t.Error("the pane should name the mode it is in")
+	}
+}
+
+func TestLogPaneOpensASuccessfulRunOnTheFullLog(t *testing.T) {
+	m := testModel(t, 200, 60, ViewCI)
+	for i, r := range m.ciRows() {
+		if r.Succeeded() {
+			m.ciRow, m.ciSel = i, r.ID
+			break
+		}
+	}
+	m = loadedLogs(t, m)
+
+	if m.logs.failedOnly {
+		t.Fatal("a run with no failing steps should open on the whole log")
+	}
+	if !strings.Contains(stripANSI(m.View()), "full log") {
+		t.Error("the pane should name the mode it is in")
+	}
+}
+
+func TestFSwitchesTheLogBetweenFailingStepsAndTheFullLog(t *testing.T) {
+	m := loadedLogs(t, failingRunModel(t))
+	m = send(m, "tab")
+
+	narrow := len(m.logs.lines)
+	if narrow == 0 {
+		t.Fatal("the failing steps should have produced lines")
+	}
+
+	m = send(m, "f")
+	m = pumpAfterModeSwitch(t, m)
+	if !strings.Contains(stripANSI(m.View()), "full log") {
+		t.Fatal("f should switch to the full log")
+	}
+	if len(m.logs.lines) <= narrow {
+		t.Errorf("the full log should carry more than the failing steps: %d then %d",
+			narrow, len(m.logs.lines))
+	}
+
+	m = send(m, "f")
+	if !m.logs.failedOnly {
+		t.Fatal("f should switch back to the failing steps")
+	}
+}
+
+func TestFDoesNotFilterTheTableWhileTheLogIsFocused(t *testing.T) {
+	m := loadedLogs(t, failingRunModel(t))
+	before := m.ciFailuresOnly
+
+	m = send(m, "tab", "f")
+
+	if m.ciFailuresOnly != before {
+		t.Error("f belongs to the log pane while the log has focus")
+	}
+}
+
+func TestFStillFiltersTheTableWhileTheTableIsFocused(t *testing.T) {
+	m := loadedLogs(t, failingRunModel(t))
+	before := m.ciFailuresOnly
+
+	m = send(m, "f")
+
+	if m.ciFailuresOnly == before {
+		t.Error("with the table focused f should still filter the table")
+	}
+}
+
+func TestEachLogModeIsCachedSeparately(t *testing.T) {
+	m := loadedLogs(t, failingRunModel(t))
+	m = send(m, "tab", "f")
+	m = pumpAfterModeSwitch(t, m)
+	full := len(m.logs.lines)
+
+	m = send(m, "f")
+	if m.logs.loading {
+		t.Error("switching back to a mode already fetched should not refetch")
+	}
+	m = send(m, "f")
+	if m.logs.loading {
+		t.Error("switching forward again should come from the cache")
+	}
+	if len(m.logs.lines) != full {
+		t.Errorf("the cached full log changed size: %d then %d", full, len(m.logs.lines))
+	}
+}
+
+func pumpAfterModeSwitch(t *testing.T, m Model) Model {
+	t.Helper()
+	if !m.logs.loading {
+		return m
+	}
+	out, _ := m.Update(logLoadMsg{gen: m.logs.gen})
+	m = out.(Model)
+	lines, err := m.actor.RunLog(t.Context(), m.logs.run, m.logs.failedOnly)
+	if err != nil {
+		t.Fatalf("mock logs: %v", err)
+	}
+	out, _ = m.Update(logsMsg{key: m.logs.key(), lines: lines})
+	return out.(Model)
+}
+
+func TestTheFooterOffersFOnlyOnceAndForTheLivePane(t *testing.T) {
+	m := loadedLogs(t, failingRunModel(t))
+
+	tableFocused := stripANSI(m.renderFooter())
+	if strings.Count(tableFocused, "f failures only") != 1 {
+		t.Errorf("with the table focused f should filter the table:\n%s", tableFocused)
+	}
+	if strings.Contains(tableFocused, "f failing steps") || strings.Contains(tableFocused, "f full log") {
+		t.Errorf("the log mode is not what f does while the table has focus:\n%s", tableFocused)
+	}
+
+	logFocused := stripANSI(send(m, "tab").renderFooter())
+	if strings.Contains(logFocused, "failures only") {
+		t.Errorf("f no longer filters the table once the log has focus:\n%s", logFocused)
+	}
+	if strings.Count(logFocused, "f failing steps") != 1 {
+		t.Errorf("the footer should name the log mode exactly once:\n%s", logFocused)
 	}
 }

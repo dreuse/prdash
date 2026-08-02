@@ -179,7 +179,7 @@ func New(o Options) Model {
 		repos:    o.Repos,
 		expanded: map[string]bool{},
 		pending:  map[model.Key]string{},
-		logs:     logPane{cache: map[int64][]string{}},
+		logs:     logPane{cache: map[logKey][]string{}},
 		loading:  true,
 		focused:  true,
 		lanes:    map[model.Column][]model.PullRequest{},

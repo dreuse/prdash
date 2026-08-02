@@ -19,16 +19,33 @@ const (
 	logRefWidth  = 28
 )
 
+type logKey struct {
+	run        int64
+	failedOnly bool
+}
+
 type logPane struct {
-	open    bool
-	focus   bool
-	run     model.WorkflowRun
-	lines   []string
-	scroll  int
-	loading bool
-	err     error
-	gen     int
-	cache   map[int64][]string
+	open       bool
+	focus      bool
+	failedOnly bool
+	run        model.WorkflowRun
+	lines      []string
+	scroll     int
+	loading    bool
+	err        error
+	gen        int
+	cache      map[logKey][]string
+}
+
+func (p logPane) key() logKey {
+	return logKey{run: p.run.ID, failedOnly: p.failedOnly}
+}
+
+func (p logPane) modeLabel() string {
+	if p.failedOnly {
+		return "failing steps"
+	}
+	return "full log"
 }
 
 func (p *logPane) close() {
@@ -39,7 +56,7 @@ func (p *logPane) close() {
 type logLoadMsg struct{ gen int }
 
 type logsMsg struct {
-	runID int64
+	key   logKey
 	lines []string
 	err   error
 }
@@ -55,6 +72,7 @@ func (m Model) toggleLogs() (tea.Model, tea.Cmd) {
 	}
 	m.logs.open = true
 	m.logs.focus = false
+	m.logs.failedOnly = run.Failed()
 	return m.bindLog(run)
 }
 
@@ -69,6 +87,7 @@ func (m Model) cursorMoved() (tea.Model, tea.Cmd) {
 	if run.ID == m.logs.run.ID && (m.logs.lines != nil || m.logs.loading || m.logs.err != nil) {
 		return m, nil
 	}
+	m.logs.failedOnly = run.Failed()
 	return m.bindLog(run)
 }
 
@@ -79,7 +98,7 @@ func (m Model) bindLog(run model.WorkflowRun) (tea.Model, tea.Cmd) {
 	m.logs.lines = nil
 	m.logs.scroll = 0
 
-	if lines, ok := m.logs.cache[run.ID]; ok {
+	if lines, ok := m.logs.cache[m.logs.key()]; ok {
 		m.logs.lines = lines
 		m.logs.scroll = len(lines)
 		return m, nil
@@ -99,24 +118,25 @@ func (m Model) applyLogLoad(msg logLoadMsg) (tea.Model, tea.Cmd) {
 	if msg.gen != m.logs.gen || !m.logs.open || !m.logs.loading {
 		return m, nil
 	}
-	return m, m.fetchLogCmd(m.logs.run)
+	return m, m.fetchLogCmd(m.logs.run, m.logs.failedOnly)
 }
 
-func (m Model) fetchLogCmd(run model.WorkflowRun) tea.Cmd {
+func (m Model) fetchLogCmd(run model.WorkflowRun, failedOnly bool) tea.Cmd {
 	actor := m.actor
+	key := logKey{run: run.ID, failedOnly: failedOnly}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 		defer cancel()
-		lines, err := actor.RunLog(ctx, run)
-		return logsMsg{runID: run.ID, lines: lines, err: err}
+		lines, err := actor.RunLog(ctx, run, failedOnly)
+		return logsMsg{key: key, lines: lines, err: err}
 	}
 }
 
 func (m Model) applyLogs(msg logsMsg) (tea.Model, tea.Cmd) {
 	if msg.err == nil && m.logs.cache != nil {
-		m.logs.cache[msg.runID] = msg.lines
+		m.logs.cache[msg.key] = msg.lines
 	}
-	if msg.runID != m.logs.run.ID {
+	if msg.key != m.logs.key() {
 		return m, nil
 	}
 	m.logs.loading = false
@@ -136,6 +156,10 @@ func (m Model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.logs.focus = false
 	case key.Matches(msg, k.Logs):
 		m.logs.close()
+	case key.Matches(msg, k.FailuresOnly):
+		m.logs.failedOnly = !m.logs.failedOnly
+		mm, cmd := m.bindLog(m.logs.run)
+		return mm, tea.Batch(cmd, m.notify(m.logs.modeLabel(), toastInfo))
 	case key.Matches(msg, k.Down):
 		m.logs.scroll = clamp(m.logs.scroll+1, 0, last)
 	case key.Matches(msg, k.Up):
@@ -178,7 +202,8 @@ func (m Model) renderLogPane(width, height int) string {
 	left := t.Faint.Render("LOGS") + "  " +
 		t.Strong.Render(truncate(run.Name, logNameWidth)) +
 		dot + t.Dim.Render(truncate(run.Branch, logRefWidth)) +
-		dot + style.Render(glyph+" "+runStatus(run))
+		dot + style.Render(glyph+" "+runStatus(run)) +
+		dot + t.Accent.Render(m.logs.modeLabel())
 
 	body, right := m.logBody(maxInt(1, height-1), width)
 	head := fillLine(spread(width, left, right), width)
@@ -190,9 +215,9 @@ func (m Model) renderLogPane(width, height int) string {
 
 func (m Model) logBody(rows, width int) (string, string) {
 	t := m.theme
-	hint := t.Faint.Render("tab " + t.Glyphs.LeftRight)
+	hint := t.Faint.Render("f mode  tab " + t.Glyphs.LeftRight)
 	if m.logs.focus {
-		hint = t.Accent.Render("focused") + t.Faint.Render("  tab "+t.Glyphs.LeftRight)
+		hint = t.Accent.Render("focused") + t.Faint.Render("  f mode  tab "+t.Glyphs.LeftRight)
 	}
 
 	switch {
@@ -201,6 +226,9 @@ func (m Model) logBody(rows, width int) (string, string) {
 	case m.logs.err != nil:
 		return t.Danger.Render(" "+truncate(m.logs.err.Error(), maxInt(1, width-2))) + "\n" +
 			t.Faint.Render(" L to retry"), hint
+	case len(m.logs.lines) == 0 && m.logs.failedOnly:
+		return t.Faint.Render(" no failing steps") + "\n" +
+			t.Faint.Render(" f for the full log"), hint
 	case len(m.logs.lines) == 0:
 		return t.Faint.Render(" no output"), hint
 	}

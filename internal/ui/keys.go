@@ -132,7 +132,7 @@ func (k KeyMap) HelpSections(g Glyphs) [][2]string {
 		{"tab", "accept the suggestion, press again to cycle"},
 		{"esc", "clear the filter"},
 		{"s", "cycle sort"},
-		{"f", "failures only (ci)"},
+		{"f", "failures only in the run table, or the log mode when the log has focus"},
 		{"F1..F4", "save the current filter, press again to recall"},
 	}
 }

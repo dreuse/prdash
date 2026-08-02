@@ -303,9 +303,14 @@ func (m Model) contextualKeys() []string {
 		} else {
 			out = append(out, m.chip("L", "logs"))
 		}
+
+		failures := m.chip("f", "failures only")
+		if m.logs.open && m.logs.focus {
+			failures = m.chip("f", m.logs.modeLabel())
+		}
 		return append(out,
 			m.chip(t.Glyphs.Enter, "open run"), m.chip("r", "re-run"),
-			m.chip("f", "failures only"), m.chip("R", "repo"),
+			failures, m.chip("R", "repo"),
 			m.chip("u", "refresh"), m.chip("1", "board"))
 	}
 
