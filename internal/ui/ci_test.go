@@ -239,6 +239,24 @@ func TestCIColumnsDropOnNarrowTerminals(t *testing.T) {
 		t.Fatalf("a 200 column terminal should show every column, got %+v", wide)
 	}
 
+	if wide.branch > maxCIBranch {
+		t.Errorf("the branch column must stay capped, got %d", wide.branch)
+	}
+
+	ultrawide := testModel(t, 400, 60, ViewCI)
+	cols := ultrawide.ciColumns()
+	if cols.branch > maxCIBranch {
+		t.Errorf("a 400 column terminal must not stretch the branch column to %d", cols.branch)
+	}
+	for _, line := range strings.Split(stripANSI(ultrawide.View()), "\n") {
+		if !strings.Contains(line, "BRANCH") {
+			continue
+		}
+		if gap := strings.Index(line, "EVENT") - strings.Index(line, "BRANCH"); gap > maxCIBranch+2 {
+			t.Errorf("branch and event drift %d columns apart on a wide terminal", gap)
+		}
+	}
+
 	narrow := testModel(t, 70, 60, ViewCI).ciColumns()
 	if narrow.event {
 		t.Error("the event column should be the first to go")

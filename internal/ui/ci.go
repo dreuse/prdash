@@ -28,6 +28,7 @@ const (
 	colCIDur    = 8
 	colCIAge    = 6
 	minCIBranch = 12
+	maxCIBranch = 44
 
 	minWorkflowW = 12
 	maxWorkflowW = 46
@@ -123,7 +124,7 @@ func (m Model) ciColumns() ciColumns {
 			width -= colCIDur
 		}
 		if width >= minCIBranch || i >= len(drop) {
-			c.branch = maxInt(minCIBranch, width)
+			c.branch = clamp(width, minCIBranch, maxCIBranch)
 			return c
 		}
 		*drop[i] = false
