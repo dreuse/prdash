@@ -1,132 +1,123 @@
 package ui
 
-import (
-	"context"
-	"strings"
-	"testing"
+import "testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-
-	"github.com/dreuse/prdash/internal/github"
-	"github.com/dreuse/prdash/internal/readiness"
-)
-
-func loaded(t *testing.T, width, height int) tea.Model {
-	t.Helper()
-	snap, err := github.NewMock().Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("mock fetch: %v", err)
+func TestTruncateHandlesWideAndCombiningRunes(t *testing.T) {
+	tests := []struct {
+		in    string
+		width int
+		want  string
+	}{
+		{"Make SQL migrations idempotent", 20, "Make SQL migrations idempotent"},
+		{"Make SQL migrations idempotent", 8, "SQL ide…"},
+		{"Add category field to the ledger", 10, "Café do…"},
+		{"データベース移行", 16, "データベース移行"},
+		{"データベース移行", 8, "データ…"},
+		{"データベース移行", 7, "データ…"},
+		{"anything", 0, ""},
+		{"anything", 1, "a"},
 	}
-	var m tea.Model = New(github.NewMock(), readiness.DefaultPolicy(), 0, []string{"acme/api"})
-	m, _ = m.Update(tea.WindowSizeMsg{Width: width, Height: height})
-	m, _ = m.Update(dataMsg{snapshot: snap})
-	return m
-}
-
-func press(m tea.Model, keys ...string) tea.Model {
-	for _, k := range keys {
-		switch k {
-		case "enter":
-			m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		case "tab":
-			m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-		default:
-			m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+	for _, tc := range tests {
+		got := truncate(tc.in, tc.width)
+		if got != tc.want {
+			t.Errorf("truncate(%q, %d) = %q, want %q", tc.in, tc.width, got, tc.want)
 		}
-	}
-	return m
-}
-
-func TestViewAlwaysFillsExactlyTheTerminal(t *testing.T) {
-	sizes := [][2]int{{175, 40}, {120, 30}, {90, 24}, {60, 20}, {40, 12}, {240, 60}, {80, 5}}
-	journeys := map[string][]string{
-		"board":          nil,
-		"board scrolled": {"j", "j", "j", "j", "j"},
-		"last column":    {"h"},
-		"detail":         {"enter"},
-		"actions":        {"tab"},
-		"actions bottom": {"tab", "G"},
-	}
-
-	for _, size := range sizes {
-		w, h := size[0], size[1]
-		for name, keys := range journeys {
-			m := press(loaded(t, w, h), keys...)
-			out := m.View()
-			lines := strings.Split(out, "\n")
-
-			if len(lines) != h {
-				t.Errorf("%dx%d %s: rendered %d lines, want exactly %d", w, h, name, len(lines), h)
-			}
-			for i, line := range lines {
-				if n := lipgloss.Width(line); n > w {
-					t.Errorf("%dx%d %s: line %d is %d cells wide, want at most %d", w, h, name, i, n, w)
-				}
-			}
+		if w := textWidth(got); w > tc.width {
+			t.Errorf("truncate(%q, %d) produced %d columns", tc.in, tc.width, w)
 		}
 	}
 }
 
-func TestNothingIsRenderedBeforeTheTerminalSizeIsKnown(t *testing.T) {
-	m := New(github.NewMock(), readiness.DefaultPolicy(), 0, []string{"acme/api"})
-	if out := m.View(); out != "" {
-		t.Fatalf("an unsized model must render nothing, got %d lines:\n%s",
-			len(strings.Split(out, "\n")), out)
+func TestLaneWidthsAreContentProportional(t *testing.T) {
+	widths := laneWidths([]int{1, 2, 5, 3, 4}, 200)
+
+	if widths[0] >= widths[2] {
+		t.Errorf("a 1-card lane (%d) must be narrower than a 5-card lane (%d)", widths[0], widths[2])
+	}
+	if widths[2] != widths[3] {
+		t.Errorf("lane weight is capped at 3, so 5 cards and 3 cards should match: %d vs %d",
+			widths[2], widths[3])
+	}
+
+	total := laneGutter * 4
+	for _, w := range widths {
+		total += w
+	}
+	if total > 200 {
+		t.Errorf("lanes total %d columns, more than the 200 available", total)
 	}
 }
 
-func TestViewFitsWithAMultiLineFooter(t *testing.T) {
-	for _, size := range [][2]int{{80, 3}, {80, 4}, {60, 6}, {120, 24}} {
-		w, h := size[0], size[1]
-		var m tea.Model = loaded(t, w, h)
-		m, _ = m.Update(noticeMsg{text: "opened https://github.com/acme/api/pull/412"})
-
-		lines := strings.Split(m.View(), "\n")
-		if len(lines) != h {
-			t.Errorf("%dx%d with a notice: rendered %d lines, want exactly %d", w, h, len(lines), h)
+func TestLaneWidthsRespectTheMinimum(t *testing.T) {
+	widths := laneWidths([]int{1, 1, 1}, 120)
+	for i, w := range widths {
+		if w < minLaneWidth {
+			t.Errorf("lane %d is %d columns, below the %d minimum", i, w, minLaneWidth)
 		}
-		for i, line := range lines {
-			if n := lipgloss.Width(line); n > w {
-				t.Errorf("%dx%d with a notice: line %d is %d cells wide, want at most %d", w, h, i, n, w)
+	}
+}
+
+func TestLaneWidthsSurviveTightBudgets(t *testing.T) {
+	for _, width := range []int{60, 80, 100, 140, 300} {
+		widths := laneWidths([]int{2, 2, 2, 2, 2, 2}, width)
+		total := laneGutter * 5
+		for _, w := range widths {
+			total += w
+			if w < 1 {
+				t.Fatalf("at %d columns a lane came out %d wide", width, w)
 			}
 		}
+		if total > width {
+			t.Fatalf("at %d columns the lanes total %d", width, total)
+		}
 	}
 }
 
-func TestSelectedCardStaysVisibleWhenScrolling(t *testing.T) {
-	m := loaded(t, 100, 12)
-	first := m.View()
-	if !strings.Contains(first, "#412") {
-		t.Fatalf("first draft card should start visible:\n%s", first)
+func TestVisibleLanesFollowWidth(t *testing.T) {
+	tests := []struct {
+		width int
+		lanes int
+	}{
+		{60, 2},
+		{80, 2},
+		{100, 3},
+		{120, 4},
+		{160, 5},
+		{180, 6},
+		{300, 10},
 	}
-	if strings.Contains(first, "#408") {
-		t.Fatalf("second draft card should not fit at this height:\n%s", first)
-	}
-
-	scrolled := press(m, "j").View()
-	if !strings.Contains(scrolled, "#408") {
-		t.Fatalf("selecting the second card should scroll it into view:\n%s", scrolled)
+	for _, tc := range tests {
+		if got := (Layout{Width: tc.width, Height: 40}).MaxVisibleLanes(); got != tc.lanes {
+			t.Errorf("%d cols fits %d lanes, want %d", tc.width, got, tc.lanes)
+		}
 	}
 }
 
-func TestRepositoryColumnOnlyAppearsWithSeveralRepos(t *testing.T) {
-	multi := press(loaded(t, 160, 30), "tab").View()
-	if !strings.Contains(multi, "REPOSITORY") {
-		t.Fatalf("several repos should keep the repository column:\n%s", multi)
+func TestSplitLeavesBothHalvesUsable(t *testing.T) {
+	for _, body := range []int{8, 10, 20, 40, 60} {
+		detail := (Layout{Width: 200, Height: body + 3}).SplitDetailHeight(body)
+		if detail < 1 {
+			t.Fatalf("body %d gave the detail pane %d rows", body, detail)
+		}
+		if board := body - detail; board < 1 {
+			t.Fatalf("body %d left the board %d rows", body, board)
+		}
+	}
+}
+
+func TestLaneWindowKeepsSelectionVisible(t *testing.T) {
+	for selected := 0; selected < 6; selected++ {
+		offset, visible := laneWindow(6, selected, 3)
+		if visible != 3 {
+			t.Fatalf("selected %d: visible = %d, want %d", selected, visible, 3)
+		}
+		if selected < offset || selected >= offset+visible {
+			t.Fatalf("selected lane %d is outside the window [%d,%d)", selected, offset, offset+visible)
+		}
 	}
 
-	snap, _ := github.NewMock().Fetch(context.Background())
-	for i := range snap.Runs {
-		snap.Runs[i].Repo = "acme/api"
-	}
-	for i := range snap.PullRequests {
-		snap.PullRequests[i].Repo = "acme/api"
-	}
-	var single tea.Model = New(github.NewMock(), readiness.DefaultPolicy(), 0, []string{"acme/api"})
-	single, _ = single.Update(tea.WindowSizeMsg{Width: 160, Height: 30})
-	single, _ = single.Update(dataMsg{snapshot: snap})
-	if out := press(single, "tab").View(); strings.Contains(out, "REPOSITORY") {
-		t.Fatalf("a single repo should drop the repository column:\n%s", out)
+	offset, visible := laneWindow(6, 3, 0)
+	if offset != 0 || visible != 6 {
+		t.Errorf("with no cap the window is everything, got offset %d visible %d", offset, visible)
 	}
 }

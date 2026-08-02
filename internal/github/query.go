@@ -7,8 +7,13 @@ import (
 
 const pullRequestQuery = `
 query($owner: String!, $name: String!, $limit: Int!) {
+  viewer { login }
   repository(owner: $owner, name: $name) {
     nameWithOwner
+    assignableUsers(first: 100) { nodes { login name } }
+    issues(states: OPEN, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title url }
+    }
     pullRequests(states: OPEN, first: $limit, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
         number
@@ -20,6 +25,11 @@ query($owner: String!, $name: String!, $limit: Int!) {
         updatedAt
         baseRefName
         headRefName
+        additions
+        deletions
+        changedFiles
+        labels(first: 20) { nodes { name } }
+        assignees(first: 10) { nodes { login } }
         headRepositoryOwner { login }
         author { login }
         reviewRequests(first: 20) {
@@ -31,7 +41,7 @@ query($owner: String!, $name: String!, $limit: Int!) {
           }
         }
         latestOpinionatedReviews(first: 50) {
-          nodes { state author { login } }
+          nodes { state submittedAt author { login } }
         }
         commits(last: 1) {
           nodes {
@@ -39,7 +49,7 @@ query($owner: String!, $name: String!, $limit: Int!) {
               statusCheckRollup {
                 contexts(first: 100) {
                   nodes {
-                    ... on CheckRun { name status conclusion detailsUrl }
+                    ... on CheckRun { name status conclusion detailsUrl startedAt }
                     ... on StatusContext { context state targetUrl }
                   }
                 }

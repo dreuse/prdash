@@ -23,6 +23,7 @@ const (
 	BlockerChecksRunning    Blocker = "has checks still running"
 	BlockerApprovals        Blocker = "needs more approvals"
 	BlockerBehind           Blocker = "is behind the base branch"
+	BlockerProtection       Blocker = "is blocked by branch protection"
 )
 
 func (p Policy) Blockers(pr model.PullRequest) []Blocker {
@@ -48,6 +49,9 @@ func (p Policy) Blockers(pr model.PullRequest) []Blocker {
 	if p.BehindBlocks && pr.BehindBy > 0 {
 		out = append(out, BlockerBehind)
 	}
+	if pr.Blocked() {
+		out = append(out, BlockerProtection)
+	}
 	return out
 }
 
@@ -67,6 +71,8 @@ func (p Policy) Classify(pr model.PullRequest) model.Column {
 		return model.ColBlocked
 	case pr.ChecksState() == model.CheckRunning:
 		return model.ColCIRunning
+	case pr.Blocked():
+		return model.ColBlocked
 	case p.BehindBlocks && pr.BehindBy > 0:
 		return model.ColBlocked
 	case p.ReadyToMerge(pr):
@@ -77,8 +83,8 @@ func (p Policy) Classify(pr model.PullRequest) model.Column {
 }
 
 func (p Policy) Group(prs []model.PullRequest) map[model.Column][]model.PullRequest {
-	out := make(map[model.Column][]model.PullRequest, len(model.Columns))
-	for _, col := range model.Columns {
+	out := make(map[model.Column][]model.PullRequest, len(model.ActionFirstColumns))
+	for _, col := range model.ActionFirstColumns {
 		out[col] = nil
 	}
 	for _, pr := range prs {

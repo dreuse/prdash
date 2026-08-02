@@ -64,9 +64,10 @@ func (c *CLI) CheckAuth(ctx context.Context) error {
 
 func (c *CLI) Fetch(ctx context.Context) (Snapshot, error) {
 	type repoResult struct {
-		prs  []model.PullRequest
-		runs []model.WorkflowRun
-		err  error
+		prs    []model.PullRequest
+		runs   []model.WorkflowRun
+		extras repoExtras
+		err    error
 	}
 
 	results := make([]repoResult, len(c.Repos))
@@ -80,17 +81,18 @@ func (c *CLI) Fetch(ctx context.Context) (Snapshot, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			prs, err := c.fetchPRs(ctx, repo)
+			prs, extras, err := c.fetchPRs(ctx, repo)
 			if err != nil {
 				results[i] = repoResult{err: err}
 				return
 			}
 			runs, err := c.fetchRuns(ctx, repo)
 			if err != nil {
-				results[i] = repoResult{prs: prs, err: err}
+				results[i] = repoResult{prs: prs, extras: extras, err: err}
 				return
 			}
-			results[i] = repoResult{prs: prs, runs: runs}
+			c.fillFailingSteps(ctx, repo, runs)
+			results[i] = repoResult{prs: prs, runs: runs, extras: extras}
 		}(i, repo)
 	}
 	wg.Wait()
@@ -100,6 +102,11 @@ func (c *CLI) Fetch(ctx context.Context) (Snapshot, error) {
 	for _, r := range results {
 		snap.PullRequests = append(snap.PullRequests, r.prs...)
 		snap.Runs = append(snap.Runs, r.runs...)
+		snap.Issues = append(snap.Issues, r.extras.issues...)
+		snap.People = append(snap.People, r.extras.people...)
+		if snap.Viewer == "" {
+			snap.Viewer = r.extras.viewer
+		}
 		if r.err != nil {
 			errs = append(errs, r.err)
 		}
@@ -125,19 +132,48 @@ func (c *CLI) Fetch(ctx context.Context) (Snapshot, error) {
 
 type graphQLPRResponse struct {
 	Data struct {
+		Viewer struct {
+			Login string `json:"login"`
+		} `json:"viewer"`
 		Repository struct {
-			NameWithOwner string `json:"nameWithOwner"`
-			PullRequests  struct {
+			NameWithOwner   string `json:"nameWithOwner"`
+			AssignableUsers struct {
 				Nodes []struct {
-					Number              int    `json:"number"`
-					Title               string `json:"title"`
-					URL                 string `json:"url"`
-					IsDraft             bool   `json:"isDraft"`
-					Mergeable           string `json:"mergeable"`
-					CreatedAt           string `json:"createdAt"`
-					UpdatedAt           string `json:"updatedAt"`
-					BaseRefName         string `json:"baseRefName"`
-					HeadRefName         string `json:"headRefName"`
+					Login string `json:"login"`
+					Name  string `json:"name"`
+				} `json:"nodes"`
+			} `json:"assignableUsers"`
+			Issues struct {
+				Nodes []struct {
+					Number int    `json:"number"`
+					Title  string `json:"title"`
+					URL    string `json:"url"`
+				} `json:"nodes"`
+			} `json:"issues"`
+			PullRequests struct {
+				Nodes []struct {
+					Number       int    `json:"number"`
+					Title        string `json:"title"`
+					URL          string `json:"url"`
+					IsDraft      bool   `json:"isDraft"`
+					Mergeable    string `json:"mergeable"`
+					CreatedAt    string `json:"createdAt"`
+					UpdatedAt    string `json:"updatedAt"`
+					BaseRefName  string `json:"baseRefName"`
+					HeadRefName  string `json:"headRefName"`
+					Additions    int    `json:"additions"`
+					Deletions    int    `json:"deletions"`
+					ChangedFiles int    `json:"changedFiles"`
+					Labels       struct {
+						Nodes []struct {
+							Name string `json:"name"`
+						} `json:"nodes"`
+					} `json:"labels"`
+					Assignees struct {
+						Nodes []struct {
+							Login string `json:"login"`
+						} `json:"nodes"`
+					} `json:"assignees"`
 					HeadRepositoryOwner struct {
 						Login string `json:"login"`
 					} `json:"headRepositoryOwner"`
@@ -154,8 +190,9 @@ type graphQLPRResponse struct {
 					} `json:"reviewRequests"`
 					LatestOpinionatedReviews struct {
 						Nodes []struct {
-							State  string `json:"state"`
-							Author struct {
+							State       string `json:"state"`
+							SubmittedAt string `json:"submittedAt"`
+							Author      struct {
 								Login string `json:"login"`
 							} `json:"author"`
 						} `json:"nodes"`
@@ -170,6 +207,7 @@ type graphQLPRResponse struct {
 											Status     string `json:"status"`
 											Conclusion string `json:"conclusion"`
 											DetailsURL string `json:"detailsUrl"`
+											StartedAt  string `json:"startedAt"`
 											Context    string `json:"context"`
 											State      string `json:"state"`
 											TargetURL  string `json:"targetUrl"`
@@ -185,7 +223,13 @@ type graphQLPRResponse struct {
 	} `json:"data"`
 }
 
-func (c *CLI) fetchPRs(ctx context.Context, repo Repo) ([]model.PullRequest, error) {
+type repoExtras struct {
+	viewer string
+	issues []model.Issue
+	people []model.User
+}
+
+func (c *CLI) fetchPRs(ctx context.Context, repo Repo) ([]model.PullRequest, repoExtras, error) {
 	out, err := c.run(ctx, repo.String(), "list pull requests",
 		"api", "graphql",
 		"-f", "query="+pullRequestQuery,
@@ -194,12 +238,12 @@ func (c *CLI) fetchPRs(ctx context.Context, repo Repo) ([]model.PullRequest, err
 		"-F", "limit="+strconv.Itoa(prsPerRepo),
 	)
 	if err != nil {
-		return nil, err
+		return nil, repoExtras{}, err
 	}
 
 	var resp graphQLPRResponse
 	if err := json.Unmarshal(out, &resp); err != nil {
-		return nil, &Error{Repo: repo.String(), Op: "decode pull requests", Err: err}
+		return nil, repoExtras{}, &Error{Repo: repo.String(), Op: "decode pull requests", Err: err}
 	}
 
 	name := resp.Data.Repository.NameWithOwner
@@ -222,6 +266,15 @@ func (c *CLI) fetchPRs(ctx context.Context, repo Repo) ([]model.PullRequest, err
 			BaseRef:   n.BaseRefName,
 			HeadRef:   n.HeadRefName,
 			HeadOwner: n.HeadRepositoryOwner.Login,
+			Additions: n.Additions,
+			Deletions: n.Deletions,
+			Changed:   n.ChangedFiles,
+		}
+		for _, l := range n.Labels.Nodes {
+			pr.Labels = append(pr.Labels, l.Name)
+		}
+		for _, a := range n.Assignees.Nodes {
+			pr.Assignees = append(pr.Assignees, a.Login)
 		}
 		for _, rr := range n.ReviewRequests.Nodes {
 			if login := rr.RequestedReviewer.Login; login != "" {
@@ -231,26 +284,46 @@ func (c *CLI) fetchPRs(ctx context.Context, repo Repo) ([]model.PullRequest, err
 			}
 		}
 		for _, rv := range n.LatestOpinionatedReviews.Nodes {
+			review := model.Review{
+				Login:       rv.Author.Login,
+				State:       model.ReviewCommented,
+				SubmittedAt: parseTime(rv.SubmittedAt),
+			}
 			switch rv.State {
 			case "APPROVED":
 				pr.Approvals++
+				review.State = model.ReviewApproved
 			case "CHANGES_REQUESTED":
 				pr.ChangesRequested++
+				review.State = model.ReviewChangesRequested
 			}
+			pr.Reviews = append(pr.Reviews, review)
 		}
 		if len(n.Commits.Nodes) > 0 {
 			rollup := n.Commits.Nodes[0].Commit.StatusCheckRollup
 			if rollup != nil {
 				for _, ctxNode := range rollup.Contexts.Nodes {
-					pr.Checks = append(pr.Checks, normaliseCheck(
+					check := normaliseCheck(
 						ctxNode.Name, ctxNode.Context, ctxNode.Status, ctxNode.Conclusion, ctxNode.State,
-						ctxNode.DetailsURL, ctxNode.TargetURL))
+						ctxNode.DetailsURL, ctxNode.TargetURL)
+					check.StartedAt = parseTime(ctxNode.StartedAt)
+					pr.Checks = append(pr.Checks, check)
 				}
 			}
 		}
 		prs = append(prs, pr)
 	}
-	return prs, nil
+
+	extras := repoExtras{viewer: resp.Data.Viewer.Login}
+	for _, n := range resp.Data.Repository.Issues.Nodes {
+		extras.issues = append(extras.issues, model.Issue{
+			Repo: name, Number: n.Number, Title: n.Title, URL: n.URL,
+		})
+	}
+	for _, u := range resp.Data.Repository.AssignableUsers.Nodes {
+		extras.people = append(extras.people, model.User{Login: u.Login, Name: u.Name})
+	}
+	return prs, extras, nil
 }
 
 func normaliseCheck(name, context, status, conclusion, state, detailsURL, targetURL string) model.Check {
@@ -359,12 +432,16 @@ func (c *CLI) fetchRuns(ctx context.Context, repo Repo) ([]model.WorkflowRun, er
 
 	var resp struct {
 		WorkflowRuns []struct {
+			ID         int64  `json:"id"`
 			Name       string `json:"name"`
 			HeadBranch string `json:"head_branch"`
 			Event      string `json:"event"`
 			Status     string `json:"status"`
 			Conclusion string `json:"conclusion"`
 			HTMLURL    string `json:"html_url"`
+			Actor      struct {
+				Login string `json:"login"`
+			} `json:"actor"`
 			RunStarted string `json:"run_started_at"`
 			CreatedAt  string `json:"created_at"`
 			UpdatedAt  string `json:"updated_at"`
@@ -381,6 +458,8 @@ func (c *CLI) fetchRuns(ctx context.Context, repo Repo) ([]model.WorkflowRun, er
 			started = parseTime(r.CreatedAt)
 		}
 		runs = append(runs, model.WorkflowRun{
+			ID:         r.ID,
+			Actor:      r.Actor.Login,
 			Repo:       repo.String(),
 			Name:       r.Name,
 			Branch:     r.HeadBranch,
@@ -393,6 +472,56 @@ func (c *CLI) fetchRuns(ctx context.Context, repo Repo) ([]model.WorkflowRun, er
 		})
 	}
 	return runs, nil
+}
+
+const maxFailingRunProbes = 3
+
+func (c *CLI) fillFailingSteps(ctx context.Context, repo Repo, runs []model.WorkflowRun) {
+	probes := 0
+	for i := range runs {
+		if !runs[i].Failed() || probes >= maxFailingRunProbes {
+			continue
+		}
+		probes++
+		job, step, ok := c.failingStep(ctx, repo, runs[i].ID)
+		if ok {
+			runs[i].FailingJob = job
+			runs[i].FailingStep = step
+		}
+	}
+}
+
+func (c *CLI) failingStep(ctx context.Context, repo Repo, runID int64) (job, step string, ok bool) {
+	path := fmt.Sprintf("repos/%s/%s/actions/runs/%d/jobs", repo.Owner, repo.Name, runID)
+	out, err := c.run(ctx, repo.String(), "list run jobs", "api", path)
+	if err != nil {
+		return "", "", false
+	}
+	var resp struct {
+		Jobs []struct {
+			Name       string `json:"name"`
+			Conclusion string `json:"conclusion"`
+			Steps      []struct {
+				Name       string `json:"name"`
+				Conclusion string `json:"conclusion"`
+			} `json:"steps"`
+		} `json:"jobs"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", "", false
+	}
+	for _, j := range resp.Jobs {
+		if j.Conclusion == "success" || j.Conclusion == "skipped" || j.Conclusion == "" {
+			continue
+		}
+		for _, s := range j.Steps {
+			if s.Conclusion == "failure" || s.Conclusion == "timed_out" {
+				return j.Name, s.Name, true
+			}
+		}
+		return j.Name, "", true
+	}
+	return "", "", false
 }
 
 func parseTime(s string) time.Time {

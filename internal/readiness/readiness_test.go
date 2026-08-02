@@ -114,8 +114,8 @@ func TestBlockersListsEveryReason(t *testing.T) {
 
 func TestGroupCoversEveryColumn(t *testing.T) {
 	groups := DefaultPolicy().Group([]model.PullRequest{pr(), pr(draft), pr(noApprovals)})
-	if len(groups) != len(model.Columns) {
-		t.Fatalf("Group() returned %d columns, want %d", len(groups), len(model.Columns))
+	if len(groups) != len(model.ActionFirstColumns) {
+		t.Fatalf("Group() returned %d columns, want %d", len(groups), len(model.ActionFirstColumns))
 	}
 	if len(groups[model.ColReadyToMerge]) != 1 || len(groups[model.ColDraft]) != 1 || len(groups[model.ColNeedsReview]) != 1 {
 		t.Fatalf("unexpected grouping: %v", groups)
