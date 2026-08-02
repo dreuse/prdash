@@ -7,267 +7,294 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dreuse/prdash/internal/model"
-	"github.com/dreuse/prdash/internal/readiness"
 )
 
 const (
-	minColumnWidth = 26
-	columnGap      = 1
+	cardRulePad     = 3
+	behindKeepAbove = 50
+	ageDangerDays   = 180
+	laneHeaderRows  = 3
 )
 
-func (m Model) multiRepo() bool {
-	seen := make(map[string]struct{}, 2)
-	for _, prs := range m.groups {
-		for _, pr := range prs {
-			seen[pr.Repo] = struct{}{}
-			if len(seen) > 1 {
-				return true
-			}
-		}
-	}
-	for _, r := range m.runs {
-		seen[r.Repo] = struct{}{}
-		if len(seen) > 1 {
-			return true
-		}
-	}
-	return false
+type signalToken struct {
+	text      string
+	droppable bool
 }
 
 func (m Model) renderBoard(height int) string {
-	visible, offset := m.columnWindow()
-	colWidth := m.columnWidth(visible)
+	l := Layout{Width: m.width, Height: m.height}
+	order := m.order
+	if len(order) == 0 {
+		return ""
+	}
 
-	cols := make([]string, 0, visible)
-	for i := offset; i < offset+visible && i < len(model.Columns); i++ {
-		cols = append(cols, m.renderColumn(i, colWidth, height))
+	filled := make([]model.Column, 0, len(order))
+	for _, col := range order {
+		if len(m.lanes[col]) > 0 {
+			filled = append(filled, col)
+		}
+	}
+	if len(filled) == 0 {
+		return m.renderNoPRs(height)
+	}
+	order = filled
+
+	laneIdx := 0
+	for i, col := range order {
+		if len(m.order) > 0 && col == m.order[clamp(m.laneIdx, 0, len(m.order)-1)] {
+			laneIdx = i
+		}
+	}
+
+	offset, visible := laneWindow(len(order), laneIdx, l.MaxVisibleLanes())
+	window := order[offset : offset+visible]
+
+	counts := make([]int, len(window))
+	for i, col := range window {
+		counts[i] = len(m.lanes[col])
+	}
+	widths := laneWidths(counts, m.width)
+
+	cols := make([]string, 0, len(window))
+	for i, col := range window {
+		cols = append(cols, lipgloss.NewStyle().
+			Width(widths[i]).
+			MarginRight(laneGutter).
+			Render(m.renderLane(col, widths[i], height)))
 	}
 
 	board := lipgloss.JoinHorizontal(lipgloss.Top, cols...)
-	if visible < len(model.Columns) {
+	if visible < len(order) {
+		pages := (len(order) + visible - 1) / visible
+		page := offset/maxInt(1, visible) + 1
 		board = lipgloss.JoinVertical(lipgloss.Left, board,
-			m.theme.Dim.Render(fmt.Sprintf("columns %d-%d of %d", offset+1, offset+visible, len(model.Columns))))
+			m.theme.Faint.Render(fmt.Sprintf("lanes %d/%d  %s for more", page, pages,
+				m.theme.Glyphs.LeftRight)))
 	}
 	return board
 }
 
-func (m Model) columnWidth(visible int) int {
-	if visible == 0 {
-		return minColumnWidth
+func (m Model) renderNoPRs(height int) string {
+	t := m.theme
+	msg := t.Dim.Render("No PRs")
+	switch {
+	case !m.filter.Empty():
+		msg = t.Dim.Render("No PRs match this filter") + "\n\n" + t.Faint.Render("esc to clear")
+	case m.scope != "":
+		msg = t.Dim.Render("No open PRs in "+shortRepo(m.scope)) + "\n\n" +
+			t.Faint.Render("R to switch repository")
 	}
-	w := (m.width - columnGap*(visible-1)) / visible
-	if w < minColumnWidth {
-		w = minColumnWidth
-	}
-	return w
+	return lipgloss.Place(m.width, height, lipgloss.Center, lipgloss.Center, msg)
 }
 
-func (m Model) columnWindow() (visible, offset int) {
-	total := len(model.Columns)
-	visible = (m.width + columnGap) / (minColumnWidth + columnGap)
-	if visible >= total {
-		return total, 0
-	}
-	if visible < 1 {
-		visible = 1
-	}
-	offset = m.col - visible + 1
-	if offset < 0 {
-		offset = 0
-	}
-	if m.col < offset {
-		offset = m.col
-	}
-	return visible, offset
-}
+func (m Model) renderLane(col model.Column, width, height int) string {
+	t := m.theme
+	prs := m.lanes[col]
 
-func (m Model) renderColumn(idx, width, height int) string {
-	col := model.Columns[idx]
-	prs := m.groups[col]
+	header := t.LaneHeader(col).Render(col.String()) + " " + t.Faint.Render(itoa(len(prs)))
+	rule := t.LaneRule(col).Render(strings.Repeat(t.Glyphs.HRule, maxInt(1, width)))
 
-	header := m.theme.ColumnStyle(col).Render(col.String()) + " " +
-		m.theme.ColumnCount.Render(fmt.Sprintf("(%d)", len(prs)))
-	if idx == m.col {
-		header = m.theme.Icons.Selected + header
-	} else {
-		header = " " + header
-	}
-
-	body := make([]string, 0, len(prs)+1)
-	if len(prs) == 0 {
-		body = append(body, m.theme.Empty.Render("  "+m.emptyLabel()))
-	}
-
+	budget := maxInt(1, height-laneHeaderRows)
+	inner := maxInt(6, width-cardRulePad)
 	cards := make([]string, len(prs))
 	heights := make([]int, len(prs))
 	for i, pr := range prs {
-		cards[i] = m.renderCard(pr, width-2, idx == m.col && i == m.row)
-		heights[i] = lipgloss.Height(cards[i])
+		cards[i] = m.renderCard(pr, col, inner, pr.Key() == m.sel)
+		heights[i] = lipgloss.Height(cards[i]) + 1
 	}
 
-	budget := height - 2
-	start, end := fitCards(heights, budget, idx == m.col, m.row)
-	if end < len(cards) {
-		budget--
-		start, end = fitCards(heights, budget, idx == m.col, m.row)
-	}
+	active := len(m.order) > 0 && m.order[clamp(m.laneIdx, 0, len(m.order)-1)] == col
+	start, end := fitCards(heights, budget, m.laneRow(), active)
+
+	body := make([]string, 0, end-start+1)
 	for i := start; i < end; i++ {
 		body = append(body, cards[i])
 	}
 	if hidden := len(cards) - (end - start); hidden > 0 {
-		body = append(body, m.theme.Dim.Render(fmt.Sprintf("  +%d more", hidden)))
+		body = append(body, t.Faint.Render(" +"+itoa(hidden)+" more"))
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, append([]string{header, ""}, body...)...)
-	return lipgloss.NewStyle().Width(width).MaxHeight(height).MarginRight(columnGap).Render(content)
+	return header + "\n" + rule + "\n\n" + strings.Join(body, "\n\n")
 }
 
-func fitCards(heights []int, budget int, active bool, selected int) (start, end int) {
-	if budget < 1 {
-		budget = 1
+func fitCards(heights []int, budget, selected int, active bool) (start, end int) {
+	if !active {
+		selected = 0
 	}
-	for start = 0; start < len(heights); start++ {
+	for start = 0; ; start++ {
 		used := 0
 		for end = start; end < len(heights) && used+heights[end] <= budget; end++ {
 			used += heights[end]
 		}
 		if end == start {
-			end = start + 1
+			end = minInt(start+1, len(heights))
 		}
-		if !active || selected < end || start >= len(heights)-1 {
+		if selected < end || start >= len(heights)-1 {
 			return start, end
 		}
 	}
-	return 0, len(heights)
 }
 
-func (m Model) renderCard(pr model.PullRequest, width int, selected bool) string {
-	inner := width - 4
-	if inner < 8 {
-		inner = 8
+func (m Model) renderCard(pr model.PullRequest, col model.Column, width int, selected bool) string {
+	t := m.theme
+	dim := pr.IsDraft || int(pr.Age().Hours()/24) > ageDangerDays
+
+	lines := []string{
+		m.cardTitle(pr, width, selected, dim),
+		m.cardMeta(pr, width, dim),
+	}
+	if signals := m.cardSignals(pr, col, width); signals != "" {
+		lines = append(lines, signals)
+	}
+	if label, busy := m.pending[pr.Key()]; busy {
+		lines = append(lines, t.Warn.Render(m.spinnerFrame()+" "+label))
 	}
 
-	title := m.theme.CardTitle.Render(truncate(fmt.Sprintf("#%d %s", pr.Number, pr.Title), inner))
-	dot := " " + m.theme.Icons.Dot + " "
-	metaParts := []string{"@" + pr.Author, model.ShortAge(pr.Age())}
-	if m.multiRepo() {
-		metaParts = append([]string{pr.Repo}, metaParts...)
-	}
-	meta := m.theme.CardMeta.Render(truncate(strings.Join(metaParts, dot), inner))
-
-	checks := pr.ChecksState()
-	if len(pr.Checks) == 0 {
-		checks = model.CheckNeutral
-	}
-	checkBadge := m.theme.CheckStyle(checks).Render(m.theme.CheckIcon(checks) + " " + m.checkSummary(pr))
-	approvalBadge := m.approvalBadge(pr)
-
-	lines := []string{title, meta}
-	if lipgloss.Width(checkBadge)+2+lipgloss.Width(approvalBadge) > inner {
-		lines = append(lines, checkBadge, approvalBadge)
-	} else {
-		lines = append(lines, checkBadge+"  "+approvalBadge)
-	}
-
-	if rev := m.reviewerLine(pr, inner); rev != "" {
-		lines = append(lines, rev)
-	}
-	if flags := m.flagLine(pr); flags != "" {
-		lines = append(lines, flags)
-	}
-
-	style := m.theme.Card
+	rule := t.LaneAccent(col).Render(t.Glyphs.LaneRule)
+	marker := " "
+	rowStyle := lipgloss.NewStyle()
 	if selected {
-		style = m.theme.CardSelected
+		marker = t.Accent.Render(t.Glyphs.Selected)
+		rowStyle = t.Selected
 	}
-	return style.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
+
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		lead := rule + "  "
+		if i == 0 {
+			lead = rule + marker + " "
+		}
+		out[i] = rowStyle.Render(fillLine(lead+line, width+cardRulePad))
+	}
+	return strings.Join(out, "\n")
 }
 
-func (m Model) checkSummary(pr model.PullRequest) string {
-	if len(pr.Checks) == 0 {
-		return "no checks"
+func (m Model) cardTitle(pr model.PullRequest, width int, selected, dim bool) string {
+	t := m.theme
+	num := "#" + itoa(pr.Number)
+	numStyle, titleStyle := t.Faint, t.Strong
+	switch {
+	case selected:
+		numStyle, titleStyle = t.Accent.Background(selectedBg(t)), t.SelectedTitle
+	case dim:
+		numStyle, titleStyle = t.Faint, t.Faint
 	}
-	var passed, failed, running int
-	for _, c := range pr.Checks {
-		switch c.State {
-		case model.CheckPassed:
-			passed++
-		case model.CheckFailed:
-			failed++
-		case model.CheckRunning:
-			running++
+	title := truncate(pr.Title, maxInt(1, width-textWidth(num)-1))
+	return numStyle.Render(num) + " " + titleStyle.Render(title)
+}
+
+func selectedBg(t Theme) lipgloss.TerminalColor {
+	if t.NoColor {
+		return lipgloss.NoColor{}
+	}
+	return toneBgSelected.adaptive()
+}
+
+func (m Model) cardMeta(pr model.PullRequest, width int, dim bool) string {
+	t := m.theme
+	days := int(pr.Age().Hours() / 24)
+
+	authorStyle := t.Dim
+	ageStyle := t.AgeStyle(days)
+	if dim {
+		authorStyle, ageStyle = t.Faint, t.Faint
+	}
+
+	stake := pr.StakeFor(m.viewer).String()
+	repo := ""
+	if m.multiRepo() {
+		repo = shortRepo(pr.Repo)
+	}
+
+	dot := t.Faint.Render(" " + t.Glyphs.Dot + " ")
+	line := ""
+	for drop := 0; drop <= 2; drop++ {
+		var parts []string
+		if repo != "" && drop < 1 {
+			parts = append(parts, t.Faint.Render(truncate(repo, 14)))
+		}
+		parts = append(parts, authorStyle.Render(pr.Author))
+		if drop < 2 {
+			parts = append(parts, ageStyle.Render(model.ShortAge(pr.Age())))
+		}
+		if stake != "" {
+			parts = append(parts, t.Dim.Render(stake))
+		}
+		line = strings.Join(parts, dot)
+		if lipgloss.Width(line) <= width {
+			return line
 		}
 	}
-	switch {
-	case failed > 0:
-		return fmt.Sprintf("%d failing", failed)
-	case running > 0:
-		return fmt.Sprintf("%d running", running)
-	default:
-		return fmt.Sprintf("%d/%d checks", passed, len(pr.Checks))
-	}
+	return truncateStyled(line, width)
 }
 
-func (m Model) approvalBadge(pr model.PullRequest) string {
-	label := fmt.Sprintf("%s %d/%d", m.theme.Icons.Approved, pr.Approvals, m.policy.RequiredApprovals)
-	if pr.ChangesRequested > 0 {
-		return m.theme.Failed.Render(fmt.Sprintf("%s %d changes", m.theme.Icons.Failed, pr.ChangesRequested))
-	}
-	if pr.Approvals >= m.policy.RequiredApprovals {
-		return m.theme.Passed.Render(label)
-	}
-	return m.theme.Dim.Render(label)
-}
+func (m Model) cardSignals(pr model.PullRequest, col model.Column, width int) string {
+	t := m.theme
+	counts := pr.CheckCounts()
+	var tokens []signalToken
 
-func (m Model) reviewerLine(pr model.PullRequest, width int) string {
-	if len(pr.RequestedReviewers) == 0 {
-		return ""
+	if counts.Failed > 0 {
+		tokens = append(tokens, signalToken{t.Danger.Render(fmt.Sprintf("%s %d %s failing",
+			t.Glyphs.Fail, counts.Failed, plural(counts.Failed, "check", "checks"))), false})
 	}
-	names := strings.Join(pr.RequestedReviewers, ", ")
-	return m.theme.CardMeta.Render(truncate(m.theme.Icons.Reviewer+" "+names, width))
-}
-
-func (m Model) flagLine(pr model.PullRequest) string {
-	var parts []string
 	if pr.HasConflicts() {
-		parts = append(parts, m.theme.Failed.Render(m.theme.Icons.Conflict+" conflict"))
+		tokens = append(tokens, signalToken{t.Warn.Render(t.Glyphs.Conflict + " conflict"), false})
+	}
+	if pr.ChangesRequested > 0 {
+		tokens = append(tokens, signalToken{
+			t.Review.Render(fmt.Sprintf("%d change req", pr.ChangesRequested)), true})
+	}
+	if col == model.ColReadyToMerge && pr.Approvals >= m.policy.RequiredApprovals {
+		tokens = append(tokens, signalToken{t.OK.Render(t.Glyphs.Pass + " approved"), true})
+	}
+	if counts.Failed == 0 && counts.Total > 0 && counts.Passed < counts.Total {
+		tokens = append(tokens, signalToken{t.Faint.Render(fmt.Sprintf("%s %d/%d",
+			t.Glyphs.Pass, counts.Passed, counts.Total)), true})
 	}
 	if pr.BehindBy > 0 {
-		parts = append(parts, m.theme.Warn.Render(fmt.Sprintf("%s%d behind", m.theme.Icons.Behind, pr.BehindBy)))
+		tokens = append(tokens, signalToken{
+			t.BehindStyle(pr.BehindBy).Render(t.Glyphs.Behind + itoa(pr.BehindBy)),
+			pr.BehindBy <= behindKeepAbove,
+		})
 	}
-	if pr.IsDraft {
-		parts = append(parts, m.theme.Dim.Render(m.theme.Icons.Draft+" draft"))
-	}
-	return strings.Join(parts, "  ")
-}
-
-func (m Model) selectedPR() (model.PullRequest, bool) {
-	prs := m.groups[model.Columns[m.col]]
-	if m.row < 0 || m.row >= len(prs) {
-		return model.PullRequest{}, false
-	}
-	return prs[m.row], true
-}
-
-func blockerText(p readiness.Policy, pr model.PullRequest) []string {
-	blockers := p.Blockers(pr)
-	out := make([]string, 0, len(blockers))
-	for _, b := range blockers {
-		out = append(out, string(b))
-	}
-	return out
-}
-
-func truncate(s string, width int) string {
-	if width <= 0 {
+	if len(tokens) == 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) <= width {
-		return s
+
+	dot := t.Faint.Render(" " + t.Glyphs.Dot + " ")
+	for {
+		parts := make([]string, len(tokens))
+		for i, tk := range tokens {
+			parts[i] = tk.text
+		}
+		line := strings.Join(parts, dot)
+		if lipgloss.Width(line) <= width {
+			return line
+		}
+		dropped := false
+		for i := len(tokens) - 1; i >= 0; i-- {
+			if tokens[i].droppable {
+				tokens = append(tokens[:i], tokens[i+1:]...)
+				dropped = true
+				break
+			}
+		}
+		if !dropped {
+			return truncateStyled(line, width)
+		}
 	}
-	if width <= 2 {
-		return string(r[:width])
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
 	}
-	return string(r[:width-2]) + ".."
+	return many
+}
+
+func shortRepo(full string) string {
+	if _, name, ok := strings.Cut(full, "/"); ok {
+		return name
+	}
+	return full
 }
