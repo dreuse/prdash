@@ -6,7 +6,11 @@ import (
 	"path/filepath"
 )
 
-const appDir = "pr-dashboard"
+const (
+	appDir   = "pr-dashboard"
+	dirPerm  = 0o700
+	filePerm = 0o600
+)
 
 func Dir() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
@@ -31,7 +35,7 @@ func readJSON(name string, dst any) bool {
 
 func writeJSON(name string, src any) error {
 	dir := Dir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(src, "", "  ")
@@ -50,7 +54,10 @@ func writeJSON(name string, src any) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+	if err := os.Chmod(tmp.Name(), filePerm); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, dirPerm); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), path(name))
