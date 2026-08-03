@@ -9,6 +9,14 @@ const (
 	settingsFile   = "settings.json"
 	settingsSchema = 1
 	SavedFilterN   = 4
+
+	NotifyOff      = "off"
+	NotifyFailures = "failures"
+	NotifyAll      = "all"
+
+	ScopeAny      = "any"
+	ScopeMine     = "mine"
+	ScopeAuthored = "authored"
 )
 
 type Settings struct {
@@ -28,6 +36,12 @@ type Settings struct {
 	CIRunsWindow   int  `json:"ci_runs_window"`
 	CIRecentHours  int  `json:"ci_recent_hours"`
 	CIFailuresOnly bool `json:"ci_failures_only"`
+
+	Notify         string `json:"notify"`
+	NotifyScope    string `json:"notify_scope"`
+	NotifyReviews  bool   `json:"notify_reviews"`
+	NotifyReady    bool   `json:"notify_ready"`
+	NotifyAssigned bool   `json:"notify_assigned"`
 
 	Sort          string   `json:"sort"`
 	StartupFilter string   `json:"startup_filter"`
@@ -49,6 +63,8 @@ func DefaultSettings() Settings {
 		CIRunsWindow:      20,
 		CIRecentHours:     24,
 		CIFailuresOnly:    false,
+		Notify:            NotifyOff,
+		NotifyScope:       ScopeAny,
 		Sort:              "urgency",
 		SavedFilters:      make([]string, SavedFilterN),
 		RequiredApprovals: 1,
@@ -79,6 +95,16 @@ func (s *Settings) normalise() {
 	if s.RequiredApprovals < 0 {
 		s.RequiredApprovals = d.RequiredApprovals
 	}
+	switch s.Notify {
+	case NotifyOff, NotifyFailures, NotifyAll:
+	default:
+		s.Notify = d.Notify
+	}
+	switch s.NotifyScope {
+	case ScopeAny, ScopeMine, ScopeAuthored:
+	default:
+		s.NotifyScope = d.NotifyScope
+	}
 	for _, pair := range [][2]*string{
 		{&s.DefaultView, &d.DefaultView},
 		{&s.Theme, &d.Theme},
@@ -107,6 +133,10 @@ func dedupeFold(list []string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+func (s Settings) NotifiesAnything() bool {
+	return s.Notify != NotifyOff || s.NotifyReviews || s.NotifyReady || s.NotifyAssigned
 }
 
 func (s Settings) Interval() time.Duration {

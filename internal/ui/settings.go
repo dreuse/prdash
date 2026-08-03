@@ -5,9 +5,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dreuse/prdash/internal/config"
+	"github.com/dreuse/prdash/internal/github"
 	"github.com/dreuse/prdash/internal/model"
 )
 
@@ -82,9 +82,11 @@ func (m Model) settingsFields() []settingsField {
 		desc: "owner/name",
 		get:  func(config.Settings) string { return "" },
 		set: func(s *config.Settings, v string) {
-			if v = strings.TrimSpace(v); v != "" {
-				s.Repos = append(s.Repos, v)
+			v = strings.TrimSpace(v)
+			if _, err := github.ParseRepo(v); err != nil {
+				return
 			}
+			s.Repos = appendFold(s.Repos, v)
 		}})
 
 	fields = append(fields,
@@ -109,6 +111,26 @@ func (m Model) settingsFields() []settingsField {
 			kind: fieldToggle,
 			get:  func(s config.Settings) string { return onOff(s.CIFailuresOnly) },
 			set:  func(s *config.Settings, v string) { s.CIFailuresOnly = v == "on" }},
+		settingsField{section: "NOTIFICATIONS", label: "Scope", desc: "any pull request, mine adds the ones assigned to you, authored is only the ones you opened",
+			kind: fieldCycle, values: []string{config.ScopeAny, config.ScopeMine, config.ScopeAuthored},
+			get: func(s config.Settings) string { return s.NotifyScope },
+			set: func(s *config.Settings, v string) { s.NotifyScope = v }},
+		settingsField{section: "NOTIFICATIONS", label: "Runs that finish", desc: "desktop alert when a workflow run lands",
+			kind: fieldCycle, values: []string{config.NotifyOff, config.NotifyFailures, config.NotifyAll},
+			get: func(s config.Settings) string { return s.Notify },
+			set: func(s *config.Settings, v string) { s.Notify = v }},
+		settingsField{section: "NOTIFICATIONS", label: "Reviews", desc: "someone approves or requests changes",
+			kind: fieldToggle,
+			get:  func(s config.Settings) string { return onOff(s.NotifyReviews) },
+			set:  func(s *config.Settings, v string) { s.NotifyReviews = v == "on" }},
+		settingsField{section: "NOTIFICATIONS", label: "Ready to merge", desc: "a pull request clears every check and approval",
+			kind: fieldToggle,
+			get:  func(s config.Settings) string { return onOff(s.NotifyReady) },
+			set:  func(s *config.Settings, v string) { s.NotifyReady = v == "on" }},
+		settingsField{section: "NOTIFICATIONS", label: "Handed to you", desc: "you are assigned or your review is requested, whatever the scope",
+			kind: fieldToggle,
+			get:  func(s config.Settings) string { return onOff(s.NotifyAssigned) },
+			set:  func(s *config.Settings, v string) { s.NotifyAssigned = v == "on" }},
 
 		settingsField{section: "DEFAULTS", label: "Sort", desc: "default ordering inside a lane or group",
 			kind: fieldCycle, values: []string{"urgency", "updated", "age", "number"},
@@ -142,6 +164,8 @@ func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k", "up":
 		m.panel.idx = clamp(m.panel.idx-1, 0, len(fields)-1)
 		return m, nil
+	case "a":
+		return m.focusAddRepo(fields)
 	case "d":
 		return m.removeRepo(fields)
 	case "r":
@@ -213,6 +237,16 @@ func rawValue(f settingsField, s config.Settings) string {
 	return ""
 }
 
+func (m Model) focusAddRepo(fields []settingsField) (tea.Model, tea.Cmd) {
+	for i, f := range fields {
+		if f.kind == fieldText && f.section == "REPOSITORIES" {
+			m.panel.idx = i
+			return m.cycleField(fields, 1)
+		}
+	}
+	return m, nil
+}
+
 func (m Model) removeRepo(fields []settingsField) (tea.Model, tea.Cmd) {
 	f := fields[clamp(m.panel.idx, 0, len(fields)-1)]
 	if f.kind != fieldRepo {
@@ -220,7 +254,7 @@ func (m Model) removeRepo(fields []settingsField) (tea.Model, tea.Cmd) {
 	}
 	kept := make([]string, 0, len(m.settings.Repos))
 	for _, r := range m.settings.Repos {
-		if r != f.repo {
+		if !strings.EqualFold(r, f.repo) {
 			kept = append(kept, r)
 		}
 	}
@@ -249,18 +283,20 @@ func (m Model) applySettings() (tea.Model, tea.Cmd) {
 	}
 	m.rebuild()
 
-	cmds := []tea.Cmd{m.persist()}
+	var cmds []tea.Cmd
 	if !sameStrings(m.repos, m.settings.Repos) && m.source != nil {
 		fetcher, actor, err := m.source(m.settings.Repos)
 		if err != nil {
-			return m, tea.Batch(append(cmds, m.notify(firstLine(err.Error()), toastBad))...)
+			m.settings.Repos = m.repos
+			m.rebuild()
+			return m, m.notify(firstLine(err.Error()), toastBad)
 		}
 		m.fetcher, m.actor, m.repos = fetcher, actor, m.settings.Repos
 		m.loading = true
 		m.tickGen++
 		cmds = append(cmds, m.fetchCmd(), m.scheduleTick())
 	}
-	return m, tea.Batch(cmds...)
+	return m, tea.Batch(append(cmds, m.persist())...)
 }
 
 func sameStrings(a, b []string) bool {
@@ -414,5 +450,3 @@ func laneSlugList() []string {
 	}
 	return out
 }
-
-var _ = lipgloss.NewStyle

@@ -119,18 +119,20 @@ type Model struct {
 	view          View
 	stack         []overlayKind
 
-	prs    []model.PullRequest
-	runs   []model.WorkflowRun
-	issues []model.Issue
-	people []model.User
-	viewer string
-	emoji  EmojiSet
+	prs      []model.PullRequest
+	byBranch map[string]model.PullRequest
+	runs     []model.WorkflowRun
+	issues   []model.Issue
+	people   []model.User
+	viewer   string
+	emoji    EmojiSet
 
 	order   []model.Column
 	lanes   map[model.Column][]model.PullRequest
 	laneIdx int
 	sel     model.Key
 	split   bool
+	multi   bool
 
 	scope     string
 	sortMode  model.SortMode
@@ -143,6 +145,7 @@ type Model struct {
 	ciRow          int
 	ciSel          int64
 	ciFailuresOnly bool
+	ciCache        []model.WorkflowRun
 	logs           logPane
 
 	confirm  confirmState
@@ -153,6 +156,7 @@ type Model struct {
 	toast       toast
 	toastGen    int
 	spinnerStep int
+	spinnerOn   bool
 	loading     bool
 	loadedOnce  bool
 	stale       bool
@@ -168,21 +172,22 @@ type Model struct {
 func New(o Options) Model {
 	s := o.Settings
 	m := Model{
-		fetcher:  o.Fetcher,
-		actor:    o.Actor,
-		source:   o.NewSource,
-		policy:   readiness.Policy{RequiredApprovals: s.RequiredApprovals, BehindBlocks: s.BehindBlocks},
-		theme:    NewTheme(s.Theme, s.ASCII),
-		keys:     DefaultKeyMap(),
-		settings: s,
-		state:    o.State,
-		repos:    o.Repos,
-		expanded: map[string]bool{},
-		pending:  map[model.Key]string{},
-		logs:     logPane{cache: map[logKey][]string{}},
-		loading:  true,
-		focused:  true,
-		lanes:    map[model.Column][]model.PullRequest{},
+		fetcher:   o.Fetcher,
+		actor:     o.Actor,
+		source:    o.NewSource,
+		policy:    readiness.Policy{RequiredApprovals: s.RequiredApprovals, BehindBlocks: s.BehindBlocks},
+		theme:     NewTheme(s.Theme, s.ASCII),
+		keys:      DefaultKeyMap(),
+		settings:  s,
+		state:     o.State,
+		repos:     o.Repos,
+		expanded:  map[string]bool{},
+		pending:   map[model.Key]string{},
+		logs:      logPane{cache: map[logKey][]string{}, order: []logKey{}},
+		loading:   true,
+		spinnerOn: true,
+		focused:   true,
+		lanes:     map[model.Column][]model.PullRequest{},
 	}
 
 	m.view = ViewBySlug(s.DefaultView)
@@ -310,7 +315,7 @@ func (m Model) baseInterval() time.Duration {
 
 func (m Model) interval() time.Duration {
 	d := m.baseInterval()
-	if !m.focused {
+	if !m.focused && !m.settings.NotifiesAnything() {
 		d = unfocusedInterval
 	}
 	if m.rateLimited && d < rateLimitBackoff {
@@ -338,6 +343,18 @@ func spinnerTick() tea.Cmd {
 	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg { return spinnerMsg{} })
 }
 
+func (m Model) needsSpinner() bool {
+	return m.loading || m.logs.loading || len(m.pending) > 0
+}
+
+func (m *Model) ensureSpinner() tea.Cmd {
+	if m.spinnerOn || !m.needsSpinner() {
+		return nil
+	}
+	m.spinnerOn = true
+	return spinnerTick()
+}
+
 func (m Model) notify(text string, kind toastKind) tea.Cmd {
 	return func() tea.Msg { return toastMsg{text: text, kind: kind} }
 }
@@ -361,6 +378,18 @@ func (m Model) writeStores() {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	out, cmd := m.update(msg)
+	next, ok := out.(Model)
+	if !ok {
+		return out, cmd
+	}
+	if spin := (&next).ensureSpinner(); spin != nil {
+		return next, tea.Batch(cmd, spin)
+	}
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -387,7 +416,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case spinnerMsg:
 		m.spinnerStep++
-		return m, spinnerTick()
+		m.spinnerOn = false
+		return m, nil
 
 	case tickMsg:
 		if msg.gen != m.tickGen {
@@ -454,10 +484,12 @@ func (m Model) applyData(msg dataMsg) (tea.Model, tea.Cmd) {
 	m.rateLimited = isRateLimit(msg.err)
 
 	if msg.err == nil || len(msg.snapshot.PullRequests) > 0 {
+		settledRuns, priorRuns := msg.snapshot.Runs, m.runs
+		priorPRs := m.prs
 		m.prs = msg.snapshot.PullRequests
-		m.runs = msg.snapshot.Runs
+		m.runs = settledRuns
 		m.issues = msg.snapshot.Issues
-		m.people = peopleFrom(msg.snapshot.PullRequests, msg.snapshot.People)
+		m.people = peopleFrom(msg.snapshot.People)
 		if msg.snapshot.Viewer != "" {
 			m.viewer = msg.snapshot.Viewer
 		}
@@ -473,14 +505,17 @@ func (m Model) applyData(msg dataMsg) (tea.Model, tea.Cmd) {
 			m.scope = scoped[0]
 		}
 		m.rebuild()
-		return m, saveCacheCmd(config.Cache{
-			FetchedAt:    m.lastUpdate,
-			Viewer:       m.viewer,
-			PullRequests: append([]model.PullRequest(nil), m.prs...),
-			Runs:         append([]model.WorkflowRun(nil), m.runs...),
-			Issues:       append([]model.Issue(nil), m.issues...),
-			People:       append([]model.User(nil), m.people...),
-		})
+		return m, tea.Batch(
+			m.announceRuns(priorRuns, settledRuns),
+			m.announcePullRequests(priorPRs, m.prs),
+			saveCacheCmd(config.Cache{
+				FetchedAt:    m.lastUpdate,
+				Viewer:       m.viewer,
+				PullRequests: append([]model.PullRequest(nil), m.prs...),
+				Runs:         append([]model.WorkflowRun(nil), m.runs...),
+				Issues:       append([]model.Issue(nil), m.issues...),
+				People:       append([]model.User(nil), m.people...),
+			}))
 	}
 	m.stale = true
 	if msg.err != nil && m.loadedOnce {
@@ -514,6 +549,9 @@ func (m *Model) rebuild() {
 		BehindBlocks:      m.settings.BehindBlocks,
 	}
 	m.order = m.laneOrder()
+	m.multi = m.countRepos() > 1
+	m.ciCache = m.sortedVisibleRuns()
+	m.indexBranches()
 
 	visible := make([]model.PullRequest, 0, len(m.prs))
 	for _, pr := range m.prs {
@@ -659,24 +697,32 @@ func (m Model) selectedPR() (model.PullRequest, bool) {
 	return model.PullRequest{}, false
 }
 
-func (m Model) prByBranch(repo, branch string) (model.PullRequest, bool) {
+func branchKey(repo, branch string) string { return repo + "\x00" + branch }
+
+func (m *Model) indexBranches() {
+	m.byBranch = make(map[string]model.PullRequest, len(m.prs))
 	for _, pr := range m.prs {
-		if pr.Repo == repo && pr.HeadRef == branch {
-			return pr, true
+		key := branchKey(pr.Repo, pr.HeadRef)
+		if _, taken := m.byBranch[key]; !taken {
+			m.byBranch[key] = pr
 		}
 	}
-	return model.PullRequest{}, false
 }
 
-func (m Model) multiRepo() bool {
+func (m Model) prByBranch(repo, branch string) (model.PullRequest, bool) {
+	pr, ok := m.byBranch[branchKey(repo, branch)]
+	return pr, ok
+}
+
+func (m Model) countRepos() int {
 	seen := map[string]struct{}{}
 	for _, pr := range m.prs {
 		seen[pr.Repo] = struct{}{}
 		if len(seen) > 1 {
-			return true
+			return len(seen)
 		}
 	}
-	return false
+	return len(seen)
 }
 
 func (m Model) repoNames() []string {

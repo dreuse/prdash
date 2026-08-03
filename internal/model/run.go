@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -39,6 +40,47 @@ func (r WorkflowRun) Failed() bool {
 }
 
 func (r WorkflowRun) Succeeded() bool { return r.Conclusion == "success" }
+
+type runKey struct {
+	repo string
+	id   int64
+}
+
+func Finished(before, after []WorkflowRun) []WorkflowRun {
+	was := make(map[runKey]bool, len(before))
+	for _, r := range before {
+		if r.InProgress() {
+			was[runKey{r.Repo, r.ID}] = true
+		}
+	}
+	var out []WorkflowRun
+	for _, r := range after {
+		if was[runKey{r.Repo, r.ID}] && !r.InProgress() {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func RunsOnPullRequests(runs []WorkflowRun, prs []PullRequest, owned func(PullRequest) bool) []WorkflowRun {
+	mine := make(map[string]bool, len(prs))
+	for _, p := range prs {
+		if p.HeadRef != "" && owned(p) {
+			mine[branchKey(p.Repo, p.HeadRef)] = true
+		}
+	}
+	var out []WorkflowRun
+	for _, r := range runs {
+		if mine[branchKey(r.Repo, r.Branch)] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func branchKey(repo, branch string) string {
+	return strings.ToLower(repo) + "\x00" + branch
+}
 
 func (r WorkflowRun) Duration() time.Duration {
 	if r.StartedAt.IsZero() {
