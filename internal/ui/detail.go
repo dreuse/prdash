@@ -23,11 +23,9 @@ func (m Model) renderSplit(pr model.PullRequest, width, height int) string {
 }
 
 func (m Model) renderDetail(pr model.PullRequest, width, height int) string {
-	blocks := m.detailBlocks(pr, width)
-
 	if width < detailTwoColumn {
 		return lipgloss.NewStyle().MaxHeight(height).Render(
-			strings.Join(blocks, "\n\n"))
+			strings.Join(m.detailBlocks(pr, width), "\n\n"))
 	}
 
 	half := (width - detailColumnGap) / 2
@@ -57,7 +55,7 @@ func (m Model) detailHeader(pr model.PullRequest, width int) string {
 		t.Strong.Render(truncate(pr.Title, maxInt(1, width-numberGutter)))
 
 	meta := []string{pr.Author, "opened " + model.ShortAge(pr.Age()) + " ago"}
-	if m.multiRepo() {
+	if m.multi {
 		meta = append([]string{shortRepo(pr.Repo)}, meta...)
 	}
 	meta = append(meta, pr.HeadRef+" "+t.Glyphs.Arrow+" "+pr.BaseRef)

@@ -96,11 +96,9 @@ func (m Model) renderLane(col model.Column, width, height int) string {
 
 	budget := maxInt(1, height-laneHeaderRows)
 	inner := maxInt(6, width-cardRulePad)
-	cards := make([]string, len(prs))
 	heights := make([]int, len(prs))
 	for i, pr := range prs {
-		cards[i] = m.renderCard(pr, col, inner, pr.Key() == m.sel)
-		heights[i] = lipgloss.Height(cards[i]) + 1
+		heights[i] = m.cardHeight(pr, col) + 1
 	}
 
 	active := len(m.order) > 0 && m.order[clamp(m.laneIdx, 0, len(m.order)-1)] == col
@@ -108,9 +106,9 @@ func (m Model) renderLane(col model.Column, width, height int) string {
 
 	body := make([]string, 0, end-start+1)
 	for i := start; i < end; i++ {
-		body = append(body, cards[i])
+		body = append(body, m.renderCard(prs[i], col, inner, prs[i].Key() == m.sel))
 	}
-	if hidden := len(cards) - (end - start); hidden > 0 {
+	if hidden := len(prs) - end; hidden > 0 {
 		body = append(body, t.Faint.Render(" +"+itoa(hidden)+" more"))
 	}
 
@@ -202,7 +200,7 @@ func (m Model) cardMeta(pr model.PullRequest, width int, dim bool) string {
 
 	stake := pr.StakeFor(m.viewer).String()
 	repo := ""
-	if m.multiRepo() {
+	if m.multi {
 		repo = shortRepo(pr.Repo)
 	}
 
@@ -228,7 +226,35 @@ func (m Model) cardMeta(pr model.PullRequest, width int, dim bool) string {
 	return truncateStyled(line, width)
 }
 
+func (m Model) hasSignals(pr model.PullRequest, col model.Column) bool {
+	counts := pr.CheckCounts()
+	switch {
+	case counts.Failed > 0,
+		pr.HasConflicts(),
+		pr.ChangesRequested > 0,
+		col == model.ColReadyToMerge && pr.Approvals >= m.policy.RequiredApprovals,
+		counts.Total > 0 && counts.Passed < counts.Total,
+		pr.BehindBy > 0:
+		return true
+	}
+	return false
+}
+
+func (m Model) cardHeight(pr model.PullRequest, col model.Column) int {
+	lines := 2
+	if m.hasSignals(pr, col) {
+		lines++
+	}
+	if _, busy := m.pending[pr.Key()]; busy {
+		lines++
+	}
+	return lines
+}
+
 func (m Model) cardSignals(pr model.PullRequest, col model.Column, width int) string {
+	if !m.hasSignals(pr, col) {
+		return ""
+	}
 	t := m.theme
 	counts := pr.CheckCounts()
 	var tokens []signalToken

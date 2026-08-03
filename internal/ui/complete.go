@@ -82,15 +82,14 @@ func (m Model) referenceCandidates(prefix string) ([]candidate, int) {
 	type ref struct {
 		number int
 		title  string
-		kind   string
 	}
 
 	refs := make([]ref, 0, len(m.prs)+len(m.issues))
 	for _, pr := range m.prs {
-		refs = append(refs, ref{pr.Number, pr.Title, "pr"})
+		refs = append(refs, ref{pr.Number, pr.Title})
 	}
 	for _, is := range m.issues {
-		refs = append(refs, ref{is.Number, is.Title, "issue"})
+		refs = append(refs, ref{is.Number, is.Title})
 	}
 
 	matched := make([]ref, 0, len(refs))
@@ -197,7 +196,7 @@ func (m Model) mentionCandidates(prefix string) ([]candidate, int) {
 	return out, total
 }
 
-func peopleFrom(prs []model.PullRequest, users []model.User) []model.User {
+func peopleFrom(users []model.User) []model.User {
 	seen := make(map[string]bool, len(users))
 	out := make([]model.User, 0, len(users))
 	for _, u := range users {

@@ -152,19 +152,20 @@ type graphQLPRResponse struct {
 			} `json:"issues"`
 			PullRequests struct {
 				Nodes []struct {
-					Number       int    `json:"number"`
-					Title        string `json:"title"`
-					URL          string `json:"url"`
-					IsDraft      bool   `json:"isDraft"`
-					Mergeable    string `json:"mergeable"`
-					CreatedAt    string `json:"createdAt"`
-					UpdatedAt    string `json:"updatedAt"`
-					BaseRefName  string `json:"baseRefName"`
-					HeadRefName  string `json:"headRefName"`
-					Additions    int    `json:"additions"`
-					Deletions    int    `json:"deletions"`
-					ChangedFiles int    `json:"changedFiles"`
-					Labels       struct {
+					Number           int    `json:"number"`
+					Title            string `json:"title"`
+					URL              string `json:"url"`
+					IsDraft          bool   `json:"isDraft"`
+					Mergeable        string `json:"mergeable"`
+					MergeStateStatus string `json:"mergeStateStatus"`
+					CreatedAt        string `json:"createdAt"`
+					UpdatedAt        string `json:"updatedAt"`
+					BaseRefName      string `json:"baseRefName"`
+					HeadRefName      string `json:"headRefName"`
+					Additions        int    `json:"additions"`
+					Deletions        int    `json:"deletions"`
+					ChangedFiles     int    `json:"changedFiles"`
+					Labels           struct {
 						Nodes []struct {
 							Name string `json:"name"`
 						} `json:"nodes"`
@@ -254,21 +255,22 @@ func (c *CLI) fetchPRs(ctx context.Context, repo Repo) ([]model.PullRequest, rep
 	prs := make([]model.PullRequest, 0, len(resp.Data.Repository.PullRequests.Nodes))
 	for _, n := range resp.Data.Repository.PullRequests.Nodes {
 		pr := model.PullRequest{
-			Repo:      name,
-			Number:    n.Number,
-			Title:     n.Title,
-			Author:    n.Author.Login,
-			URL:       n.URL,
-			CreatedAt: parseTime(n.CreatedAt),
-			UpdatedAt: parseTime(n.UpdatedAt),
-			IsDraft:   n.IsDraft,
-			Mergeable: parseMergeable(n.Mergeable),
-			BaseRef:   n.BaseRefName,
-			HeadRef:   n.HeadRefName,
-			HeadOwner: n.HeadRepositoryOwner.Login,
-			Additions: n.Additions,
-			Deletions: n.Deletions,
-			Changed:   n.ChangedFiles,
+			Repo:             name,
+			Number:           n.Number,
+			Title:            n.Title,
+			Author:           n.Author.Login,
+			URL:              n.URL,
+			CreatedAt:        parseTime(n.CreatedAt),
+			UpdatedAt:        parseTime(n.UpdatedAt),
+			IsDraft:          n.IsDraft,
+			Mergeable:        parseMergeable(n.Mergeable),
+			MergeStateStatus: n.MergeStateStatus,
+			BaseRef:          n.BaseRefName,
+			HeadRef:          n.HeadRefName,
+			HeadOwner:        n.HeadRepositoryOwner.Login,
+			Additions:        n.Additions,
+			Deletions:        n.Deletions,
+			Changed:          n.ChangedFiles,
 		}
 		for _, l := range n.Labels.Nodes {
 			pr.Labels = append(pr.Labels, l.Name)

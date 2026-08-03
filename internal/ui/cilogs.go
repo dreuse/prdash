@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	logDebounce  = 300 * time.Millisecond
-	logTabStop   = "  "
-	logNameWidth = 24
-	logRefWidth  = 28
+	logDebounce   = 300 * time.Millisecond
+	logTabStop    = "  "
+	logNameWidth  = 24
+	logRefWidth   = 28
+	maxCachedLogs = 16
 )
 
 type logKey struct {
@@ -35,6 +36,21 @@ type logPane struct {
 	err        error
 	gen        int
 	cache      map[logKey][]string
+	order      []logKey
+}
+
+func (p *logPane) remember(key logKey, lines []string) {
+	if p.cache == nil {
+		return
+	}
+	if _, seen := p.cache[key]; !seen {
+		p.order = append(p.order, key)
+	}
+	p.cache[key] = lines
+	for len(p.order) > maxCachedLogs {
+		delete(p.cache, p.order[0])
+		p.order = p.order[1:]
+	}
 }
 
 func (p logPane) key() logKey {
@@ -133,8 +149,8 @@ func (m Model) fetchLogCmd(run model.WorkflowRun, failedOnly bool) tea.Cmd {
 }
 
 func (m Model) applyLogs(msg logsMsg) (tea.Model, tea.Cmd) {
-	if msg.err == nil && m.logs.cache != nil {
-		m.logs.cache[msg.key] = msg.lines
+	if msg.err == nil {
+		m.logs.remember(msg.key, msg.lines)
 	}
 	if msg.key != m.logs.key() {
 		return m, nil

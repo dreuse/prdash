@@ -144,6 +144,8 @@ func (p PullRequest) HasConflicts() bool { return p.Mergeable == MergeableConfli
 
 func (p PullRequest) Blocked() bool { return p.MergeStateStatus == "BLOCKED" }
 
+func (p PullRequest) MergeStatePending() bool { return p.MergeStateStatus == "UNKNOWN" }
+
 func (p PullRequest) Key() Key { return Key{Repo: p.Repo, Number: p.Number} }
 
 type Key struct {
@@ -219,6 +221,25 @@ func (s Stake) String() string {
 		return "you requested changes"
 	}
 	return ""
+}
+
+func (p PullRequest) Authored(viewer string) bool {
+	return viewer != "" && strings.EqualFold(p.Author, viewer)
+}
+
+func (p PullRequest) Mine(viewer string) bool {
+	if viewer == "" {
+		return false
+	}
+	if p.Authored(viewer) {
+		return true
+	}
+	for _, a := range p.Assignees {
+		if strings.EqualFold(a, viewer) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p PullRequest) StakeFor(viewer string) Stake {

@@ -16,14 +16,15 @@ func DefaultPolicy() Policy {
 type Blocker string
 
 const (
-	BlockerDraft            Blocker = "is a draft"
-	BlockerConflict         Blocker = "has merge conflicts"
-	BlockerChangesRequested Blocker = "has requested changes"
-	BlockerChecksFailed     Blocker = "has failing checks"
-	BlockerChecksRunning    Blocker = "has checks still running"
-	BlockerApprovals        Blocker = "needs more approvals"
-	BlockerBehind           Blocker = "is behind the base branch"
-	BlockerProtection       Blocker = "is blocked by branch protection"
+	BlockerDraft             Blocker = "is a draft"
+	BlockerConflict          Blocker = "has merge conflicts"
+	BlockerChangesRequested  Blocker = "has requested changes"
+	BlockerChecksFailed      Blocker = "has failing checks"
+	BlockerChecksRunning     Blocker = "has checks still running"
+	BlockerApprovals         Blocker = "needs more approvals"
+	BlockerBehind            Blocker = "is behind the base branch"
+	BlockerProtection        Blocker = "is blocked by branch protection"
+	BlockerMergeStatePending Blocker = "is still being checked by github"
 )
 
 func (p Policy) Blockers(pr model.PullRequest) []Blocker {
@@ -51,6 +52,9 @@ func (p Policy) Blockers(pr model.PullRequest) []Blocker {
 	}
 	if pr.Blocked() {
 		out = append(out, BlockerProtection)
+	}
+	if pr.MergeStatePending() {
+		out = append(out, BlockerMergeStatePending)
 	}
 	return out
 }

@@ -63,7 +63,7 @@ func (m Model) visibleRuns() []model.WorkflowRun {
 	return out
 }
 
-func (m Model) ciRows() []model.WorkflowRun {
+func (m Model) sortedVisibleRuns() []model.WorkflowRun {
 	runs := m.visibleRuns()
 	sort.SliceStable(runs, func(i, j int) bool {
 		a, b := runs[i], runs[j]
@@ -74,6 +74,8 @@ func (m Model) ciRows() []model.WorkflowRun {
 	})
 	return runs
 }
+
+func (m Model) ciRows() []model.WorkflowRun { return m.ciCache }
 
 func (m Model) trendRows() []model.WorkflowStats {
 	return model.AggregateWorkflows(m.scopedRuns())
@@ -106,7 +108,7 @@ type ciColumns struct {
 }
 
 func (m Model) ciColumns() ciColumns {
-	c := ciColumns{pr: true, repo: m.scope == "" && m.multiRepo(), event: true, dur: true}
+	c := ciColumns{pr: true, repo: m.scope == "" && m.multi, event: true, dur: true}
 	drop := []*bool{&c.event, &c.repo, &c.dur, &c.pr}
 
 	for i := 0; ; i++ {
@@ -201,7 +203,7 @@ func (m Model) renderCI(height int) string {
 		b.WriteString(m.renderRunRow(rows[i], cols, i == m.ciRow))
 		b.WriteString("\n")
 	}
-	if hidden := len(rows) - shown; hidden > 0 {
+	if hidden := len(rows) - (offset + shown); hidden > 0 {
 		b.WriteString(t.Faint.Render("  +" + itoa(hidden) + " more " + plural(hidden, "run", "runs")))
 		b.WriteString("\n")
 	}
@@ -449,6 +451,7 @@ func (m Model) handleCIKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, k.FailuresOnly):
 		m.ciFailuresOnly = !m.ciFailuresOnly
 		m.ciRow = 0
+		m.rebuild()
 		label := "all runs"
 		if m.ciFailuresOnly {
 			label = "failures only"
