@@ -124,6 +124,31 @@ what the lane is deciding.
 | `approvals:` `behind:` `age:` | `>=2`, `>50`, `>7d` |
 | `no:` | `assignee` `reviewer` `label` |
 
+## Keys
+
+Motions follow vi: `j` `k` `h` `l` to move, `gg` and `G` for the ends, `ctrl-d` / `ctrl-u` for
+half a page, `ctrl-f` / `ctrl-b` for a full one. `tab` moves into the detail pane and back,
+`+` and `-` resize it, and the size is remembered. Inside a diff, `}` and `{` step through
+hunks and `]c` / `[c` through files. Press `?` for the full list, which always shows the keys
+that are actually bound.
+
+Any action can be rebound from `keys` in `settings.json`:
+
+```json
+{
+  "keys": {
+    "diff": "D",
+    "approve": "ctrl+a",
+    "split": "space v"
+  }
+}
+```
+
+Values are space separated, so an action can answer to several keys. Taking a key that another
+action already owns moves it — bind `split` to `S` and `S` stops opening the settings overlay.
+`ctrl-c` always quits, whatever the file says. Unknown action names are ignored. The action
+names are listed at the bottom of the `?` screen.
+
 ## Notifications
 
 Everything here is off by default and lives in the NOTIFICATIONS section of the settings
