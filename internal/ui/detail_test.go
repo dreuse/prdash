@@ -317,11 +317,23 @@ func TestTheDiffIsDroppedWhenTheSelectionMoves(t *testing.T) {
 	if len(m.detail.lines) != 0 {
 		t.Errorf("a stale diff must not linger on another pull request, kept %d lines", len(m.detail.lines))
 	}
-	if !m.detail.diff {
-		t.Error("moving the selection should keep showing diffs, not fall back to the overview")
+	if m.detail.diff {
+		t.Error("another card means another patch, the pane should fall back to the overview")
 	}
-	if !m.detail.loading {
-		t.Error("the pane should be fetching the diff of the pull request now selected")
+	if m.detail.loading {
+		t.Error("nothing should be fetched for a pane that is no longer showing a diff")
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, "DETAILS") {
+		t.Errorf("the overview of the newly selected pull request should be on screen:\n%s", out)
+	}
+}
+
+func TestClickingAnotherCardAlsoLeavesTheDiff(t *testing.T) {
+	m := focusedDiff(t, 200, 40, 12009)
+
+	m = click(m, 40, 10)
+	if m.detail.diff {
+		t.Error("a click on another card should leave the diff the same way j and k do")
 	}
 }
 

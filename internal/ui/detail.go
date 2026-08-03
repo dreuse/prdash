@@ -155,15 +155,9 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) selectionMoved() (tea.Model, tea.Cmd) {
+	m.detail.diff = false
 	m.detail.rewind()
-	save := m.persist()
-
-	pr, ok := m.selectedPR()
-	if !m.split || !m.detail.diff || !ok {
-		return m, save
-	}
-	next, cmd := m.bindDiff(pr)
-	return next, tea.Batch(save, cmd)
+	return m, m.persist()
 }
 
 func (m Model) resizeSplit(delta int) (tea.Model, tea.Cmd) {
