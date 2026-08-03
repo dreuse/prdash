@@ -89,6 +89,40 @@ prdash --mock                         # explore the ui without credentials
 `NO_COLOR=1` and light-background terminals are both supported; no information is carried
 by colour alone.
 
+## Lanes
+
+The board ships with six lanes and two orderings — `ready` puts what you can merge first,
+`pipeline` follows the order work moves through. Set `Lane order` to `custom` in the BOARD
+section of the settings overlay (`,`) and the lanes become yours: each one is a name and a
+rule, matched top to bottom, first match wins.
+
+```
+BOARD         c colour · s sort · J/K move · d remove
+  Lane order            ‹ custom ›
+  ▌ MERGE NOW           is:ready ▌
+  ▌ ON ME               reviewer:@me -is:draft ▌ age
+  ▌ BROKEN              is:conflict,failing,blocked ▌
+  add lane…             ⏎ edit
+```
+
+`enter` on `add lane…` takes `NAME | rule`. On a lane, `enter` edits the rule, `c` cycles
+its colour, `s` gives it a sort of its own, `J`/`K` move it and `d` removes it. Anything no
+rule claims lands in an `OTHER` lane at the end; write a lane with the rule `*` to name that
+lane yourself.
+
+Rules use the same syntax as the `/` filter bar, so you can try one there before making it a
+lane. `-` negates, commas are or, spaces are and, and values with spaces need quoting —
+`label:"needs product review"`. `state:` is the one key a lane cannot use, since that is
+what the lane is deciding.
+
+| Key | Values |
+| --- | --- |
+| `is:` | `ready` `running` `failing` `blocked` `conflict` `changes-requested` `behind` `draft` `stale` `approved` |
+| `author:` `assignee:` `reviewer:` | a login, `@me`, `any`, `none` |
+| `repo:` `label:` | substring, exact |
+| `approvals:` `behind:` `age:` | `>=2`, `>50`, `>7d` |
+| `no:` | `assignee` `reviewer` `label` |
+
 ## Notifications
 
 Everything here is off by default and lives in the NOTIFICATIONS section of the settings
