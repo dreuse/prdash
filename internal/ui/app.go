@@ -547,7 +547,9 @@ func (m *Model) rebuild() {
 	m.policy = readiness.Policy{
 		RequiredApprovals: m.settings.RequiredApprovals,
 		BehindBlocks:      m.settings.BehindBlocks,
+		Viewer:            m.viewer,
 	}
+	model.SetLanes(m.settings.LaneDefs())
 	m.order = m.laneOrder()
 	m.multi = m.countRepos() > 1
 	m.ciCache = m.sortedVisibleRuns()
@@ -558,7 +560,11 @@ func (m *Model) rebuild() {
 		if !m.inScope(pr.Repo) {
 			continue
 		}
-		ctx := model.FilterContext{Viewer: m.viewer, Column: m.policy.Classify(pr)}
+		ctx := model.FilterContext{
+			Viewer: m.viewer,
+			Column: m.policy.Classify(pr),
+			Ready:  m.policy.ReadyToMerge(pr),
+		}
 		if m.filter.Match(pr, ctx) {
 			visible = append(visible, pr)
 		}
@@ -566,7 +572,7 @@ func (m *Model) rebuild() {
 
 	m.lanes = m.policy.Group(visible)
 	for col := range m.lanes {
-		model.Sort(m.lanes[col], m.sortMode, m.viewer, m.policy.RequiredApprovals)
+		model.Sort(m.lanes[col], m.laneSort(col), m.viewer, m.policy.RequiredApprovals)
 	}
 	m.clampSelection()
 }
@@ -581,10 +587,20 @@ func (m Model) scopeLabel() string {
 	return shortRepo(m.scope)
 }
 
+func (m Model) laneSort(col model.Column) model.SortMode {
+	if mode, ok := model.SortModeBySlug(col.Def().Sort); ok {
+		return mode
+	}
+	return m.sortMode
+}
+
 func (m Model) laneOrder() []model.Column {
 	base := model.ActionFirstColumns
-	if m.settings.LaneOrder == "pipeline" {
+	switch m.settings.LaneOrder {
+	case config.LaneOrderPipeline:
 		base = model.PipelineColumns
+	case config.LaneOrderCustom:
+		base = model.AllColumns()
 	}
 	hidden := map[model.Column]bool{}
 	for _, slug := range m.settings.HiddenLanes {

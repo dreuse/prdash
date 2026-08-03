@@ -1,12 +1,18 @@
 package readiness
 
-import "github.com/dreuse/prdash/internal/model"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/dreuse/prdash/internal/model"
+)
 
 const DefaultRequiredApprovals = 1
 
 type Policy struct {
 	RequiredApprovals int
 	BehindBlocks      bool
+	Viewer            string
 }
 
 func DefaultPolicy() Policy {
@@ -63,7 +69,51 @@ func (p Policy) ReadyToMerge(pr model.PullRequest) bool {
 	return len(p.Blockers(pr)) == 0
 }
 
+func ValidLaneRule(rule string) bool { return LaneRuleError(rule) == "" }
+
+func LaneRuleError(rule string) string {
+	rule = strings.TrimSpace(rule)
+	if rule == "" {
+		return "a lane needs a rule"
+	}
+	if rule == model.CatchAllRule {
+		return ""
+	}
+	f := model.ParseFilter(rule)
+	if f.Empty() {
+		return "a lane needs a rule"
+	}
+	for _, t := range f.Tokens {
+		if t.Key == "state" {
+			return "state: is what this lane decides, use another key"
+		}
+		if !t.Valid {
+			return "do not understand " + strconv.Quote(t.Text) + ", try quoting the value"
+		}
+	}
+	return ""
+}
+
+func (p Policy) classifyByRules(pr model.PullRequest, lanes []model.LaneDef) model.Column {
+	ctx := model.FilterContext{Viewer: p.Viewer, Ready: p.ReadyToMerge(pr)}
+	for i, lane := range lanes {
+		if strings.TrimSpace(lane.Rule) == model.CatchAllRule {
+			return model.Column(i)
+		}
+		if !ValidLaneRule(lane.Rule) {
+			continue
+		}
+		if model.ParseFilter(lane.Rule).Match(pr, ctx) {
+			return model.Column(i)
+		}
+	}
+	return model.Column(len(lanes) - 1)
+}
+
 func (p Policy) Classify(pr model.PullRequest) model.Column {
+	if model.CustomLanes() {
+		return p.classifyByRules(pr, model.Lanes())
+	}
 	switch {
 	case pr.IsDraft:
 		return model.ColDraft
@@ -86,9 +136,24 @@ func (p Policy) Classify(pr model.PullRequest) model.Column {
 	}
 }
 
+func (p Policy) AwaitingApproval(pr model.PullRequest) bool {
+	protected := false
+	for _, b := range p.Blockers(pr) {
+		switch b {
+		case BlockerProtection:
+			protected = true
+		case BlockerApprovals:
+		default:
+			return false
+		}
+	}
+	return protected
+}
+
 func (p Policy) Group(prs []model.PullRequest) map[model.Column][]model.PullRequest {
-	out := make(map[model.Column][]model.PullRequest, len(model.ActionFirstColumns))
-	for _, col := range model.ActionFirstColumns {
+	cols := model.AllColumns()
+	out := make(map[model.Column][]model.PullRequest, len(cols))
+	for _, col := range cols {
 		out[col] = nil
 	}
 	for _, pr := range prs {

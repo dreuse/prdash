@@ -9,6 +9,7 @@ import (
 	"github.com/dreuse/prdash/internal/config"
 	"github.com/dreuse/prdash/internal/github"
 	"github.com/dreuse/prdash/internal/model"
+	"github.com/dreuse/prdash/internal/readiness"
 )
 
 const (
@@ -23,6 +24,13 @@ const (
 	fieldToggle
 	fieldText
 	fieldRepo
+	fieldLane
+)
+
+const (
+	sectionBoard  = "BOARD"
+	sectionRepos  = "REPOSITORIES"
+	laneSeparator = "|"
 )
 
 type settingsField struct {
@@ -34,6 +42,7 @@ type settingsField struct {
 	get     func(config.Settings) string
 	set     func(*config.Settings, string)
 	repo    string
+	lane    int
 }
 
 type settingsUI struct {
@@ -74,11 +83,11 @@ func (m Model) settingsFields() []settingsField {
 
 	for _, repo := range m.settings.Repos {
 		fields = append(fields, settingsField{
-			section: "REPOSITORIES", label: repo, kind: fieldRepo, repo: repo,
+			section: sectionRepos, label: repo, kind: fieldRepo, repo: repo,
 			desc: "d removes it", get: func(config.Settings) string { return "" }})
 	}
 	fields = append(fields, settingsField{
-		section: "REPOSITORIES", label: "add repository…", kind: fieldText,
+		section: sectionRepos, label: "add repository…", kind: fieldText,
 		desc: "owner/name",
 		get:  func(config.Settings) string { return "" },
 		set: func(s *config.Settings, v string) {
@@ -90,15 +99,22 @@ func (m Model) settingsFields() []settingsField {
 		}})
 
 	fields = append(fields,
-		settingsField{section: "BOARD", label: "Lane order", desc: "ready first, or the order work moves through",
-			kind: fieldCycle, values: []string{"ready", "pipeline"},
+		settingsField{section: sectionBoard, label: "Lane order", desc: "ready first, the order work moves through, or your own lanes",
+			kind: fieldCycle, values: []string{config.LaneOrderReady, config.LaneOrderPipeline, config.LaneOrderCustom},
 			get: func(s config.Settings) string { return s.LaneOrder },
-			set: func(s *config.Settings, v string) { s.LaneOrder = v }},
-		settingsField{section: "BOARD", label: "Hidden lanes", desc: "comma separated: " + strings.Join(laneSlugList(), ", "),
+			set: func(s *config.Settings, v string) { s.LaneOrder = v }})
+
+	if m.settings.LaneOrder == config.LaneOrderCustom {
+		fields = append(fields, m.laneFields()...)
+	} else {
+		fields = append(fields, settingsField{
+			section: sectionBoard, label: "Hidden lanes", desc: "comma separated: " + strings.Join(laneSlugList(), ", "),
 			kind: fieldText,
 			get:  func(s config.Settings) string { return joinOr(s.HiddenLanes, "none") },
-			set:  func(s *config.Settings, v string) { s.HiddenLanes = splitList(v) }},
+			set:  func(s *config.Settings, v string) { s.HiddenLanes = splitList(v) }})
+	}
 
+	fields = append(fields,
 		settingsField{section: "CI", label: "Runs window", desc: "how many runs the health strip summarises",
 			kind: fieldCycle, values: []string{"10", "20", "50", "100"},
 			get: func(s config.Settings) string { return itoa(s.CIRunsWindow) },
@@ -144,8 +160,45 @@ func (m Model) settingsFields() []settingsField {
 			kind: fieldCycle, values: []string{"0", "1", "2", "3"},
 			get: func(s config.Settings) string { return itoa(s.RequiredApprovals) },
 			set: func(s *config.Settings, v string) { s.RequiredApprovals = atoiSuffix(v) }},
+		settingsField{section: "DEFAULTS", label: "Behind blocks", desc: "a PR behind its base branch is not ready to merge",
+			kind: fieldToggle,
+			get:  func(s config.Settings) string { return onOff(s.BehindBlocks) },
+			set:  func(s *config.Settings, v string) { s.BehindBlocks = v == "on" }},
 	)
 	return fields
+}
+
+func (m Model) laneFields() []settingsField {
+	fields := make([]settingsField, 0, len(m.settings.Lanes)+1)
+	for i := range m.settings.Lanes {
+		i := i
+		fields = append(fields, settingsField{
+			section: sectionBoard, label: m.settings.Lanes[i].Name, kind: fieldLane, lane: i,
+			desc: laneDesc(m.settings.Lanes[i].Rule),
+			get: func(s config.Settings) string {
+				if i >= len(s.Lanes) {
+					return ""
+				}
+				return s.Lanes[i].Rule
+			},
+			set: func(s *config.Settings, v string) {
+				if i < len(s.Lanes) {
+					s.Lanes[i].Rule = strings.TrimSpace(v)
+				}
+			}})
+	}
+	return append(fields, settingsField{
+		section: sectionBoard, label: "add lane…", kind: fieldText,
+		desc: "NAME " + laneSeparator + " rule, e.g. MERGE NOW " + laneSeparator + " is:ready",
+		get:  func(config.Settings) string { return "" },
+		set: func(s *config.Settings, v string) {
+			name, rule, ok := strings.Cut(v, laneSeparator)
+			name, rule = strings.TrimSpace(name), strings.TrimSpace(rule)
+			if !ok || name == "" || rule == "" {
+				return
+			}
+			s.Lanes = append(s.Lanes, config.Lane{Name: name, Rule: rule})
+		}})
 }
 
 func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -165,9 +218,21 @@ func (m Model) handleSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.panel.idx = clamp(m.panel.idx-1, 0, len(fields)-1)
 		return m, nil
 	case "a":
-		return m.focusAddRepo(fields)
+		return m.focusAdd(fields)
 	case "d":
-		return m.removeRepo(fields)
+		return m.removeField(fields)
+	case "J":
+		return m.moveLaneField(fields, 1)
+	case "K":
+		return m.moveLaneField(fields, -1)
+	case "c":
+		return m.cycleLaneAttr(fields, func(l *config.Lane) {
+			l.Color = cycle(laneColors, l.Color, 1)
+		})
+	case "s":
+		return m.cycleLaneAttr(fields, func(l *config.Lane) {
+			l.Sort = cycle(laneSorts, l.Sort, 1)
+		})
 	case "r":
 		return m.resetSection(fields)
 	case "R":
@@ -218,7 +283,7 @@ func (m Model) cycleField(fields []settingsField, delta int) (tea.Model, tea.Cmd
 	case fieldCycle:
 		f.set(&m.settings, cycle(f.values, f.get(m.settings), delta))
 		return m.applySettings()
-	case fieldText:
+	case fieldText, fieldLane:
 		m.panel.editing = true
 		m.panel.input.SetValue(rawValue(f, m.settings))
 		m.panel.input.CursorEnd()
@@ -228,6 +293,9 @@ func (m Model) cycleField(fields []settingsField, delta int) (tea.Model, tea.Cmd
 }
 
 func rawValue(f settingsField, s config.Settings) string {
+	if f.kind == fieldLane {
+		return f.get(s)
+	}
 	switch f.label {
 	case "Hidden lanes":
 		return strings.Join(s.HiddenLanes, ",")
@@ -237,9 +305,13 @@ func rawValue(f settingsField, s config.Settings) string {
 	return ""
 }
 
-func (m Model) focusAddRepo(fields []settingsField) (tea.Model, tea.Cmd) {
+func (m Model) focusAdd(fields []settingsField) (tea.Model, tea.Cmd) {
+	section := fields[clamp(m.panel.idx, 0, len(fields)-1)].section
+	if section != sectionBoard {
+		section = sectionRepos
+	}
 	for i, f := range fields {
-		if f.kind == fieldText && f.section == "REPOSITORIES" {
+		if f.kind == fieldText && f.section == section {
 			m.panel.idx = i
 			return m.cycleField(fields, 1)
 		}
@@ -247,18 +319,55 @@ func (m Model) focusAddRepo(fields []settingsField) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) removeRepo(fields []settingsField) (tea.Model, tea.Cmd) {
+func (m Model) removeField(fields []settingsField) (tea.Model, tea.Cmd) {
 	f := fields[clamp(m.panel.idx, 0, len(fields)-1)]
-	if f.kind != fieldRepo {
+	switch f.kind {
+	case fieldRepo:
+		kept := make([]string, 0, len(m.settings.Repos))
+		for _, r := range m.settings.Repos {
+			if !strings.EqualFold(r, f.repo) {
+				kept = append(kept, r)
+			}
+		}
+		m.settings.Repos = kept
+	case fieldLane:
+		if f.lane >= len(m.settings.Lanes) {
+			return m, nil
+		}
+		kept := make([]config.Lane, 0, len(m.settings.Lanes)-1)
+		kept = append(kept, m.settings.Lanes[:f.lane]...)
+		kept = append(kept, m.settings.Lanes[f.lane+1:]...)
+		m.settings.Lanes = kept
+		m.panel.idx = maxInt(0, m.panel.idx-1)
+	default:
 		return m, nil
 	}
-	kept := make([]string, 0, len(m.settings.Repos))
-	for _, r := range m.settings.Repos {
-		if !strings.EqualFold(r, f.repo) {
-			kept = append(kept, r)
-		}
+	return m.applySettings()
+}
+
+func (m Model) cycleLaneAttr(fields []settingsField, apply func(*config.Lane)) (tea.Model, tea.Cmd) {
+	f := fields[clamp(m.panel.idx, 0, len(fields)-1)]
+	if f.kind != fieldLane || f.lane >= len(m.settings.Lanes) {
+		return m, nil
 	}
-	m.settings.Repos = kept
+	lanes := make([]config.Lane, len(m.settings.Lanes))
+	copy(lanes, m.settings.Lanes)
+	apply(&lanes[f.lane])
+	m.settings.Lanes = lanes
+	return m.applySettings()
+}
+
+func (m Model) moveLaneField(fields []settingsField, delta int) (tea.Model, tea.Cmd) {
+	f := fields[clamp(m.panel.idx, 0, len(fields)-1)]
+	to := f.lane + delta
+	if f.kind != fieldLane || to < 0 || to >= len(m.settings.Lanes) {
+		return m, nil
+	}
+	lanes := make([]config.Lane, len(m.settings.Lanes))
+	copy(lanes, m.settings.Lanes)
+	lanes[f.lane], lanes[to] = lanes[to], lanes[f.lane]
+	m.settings.Lanes = lanes
+	m.panel.idx += delta
 	return m.applySettings()
 }
 
@@ -269,7 +378,7 @@ func (m Model) resetSection(fields []settingsField) (tea.Model, tea.Cmd) {
 	section := fields[clamp(m.panel.idx, 0, len(fields)-1)].section
 	defaults := config.DefaultSettings()
 	for _, f := range fields {
-		if f.section == section && f.set != nil && f.kind != fieldRepo && f.kind != fieldText {
+		if f.section == section && f.set != nil && f.kind != fieldRepo && f.kind != fieldText && f.kind != fieldLane {
 			f.set(&m.settings, f.get(defaults))
 		}
 	}
@@ -325,17 +434,19 @@ func (m Model) renderSettings() string {
 		if f.section != section {
 			section = f.section
 			b.WriteString("\n" + t.Faint.Render(section))
-			if section == "REPOSITORIES" {
-				b.WriteString(t.Faint.Render(padLeft("a add "+t.Glyphs.Dot+" d remove",
-					maxInt(1, width-textWidth(section)-1))))
+			if hint := m.sectionHint(section); hint != "" {
+				b.WriteString(t.Faint.Render(padLeft(hint, maxInt(1, width-textWidth(section)-1))))
 			}
 			b.WriteString("\n")
 		}
 
 		focused := i == m.panel.idx
 		text := f.label
-		if f.kind == fieldRepo {
+		switch f.kind {
+		case fieldRepo:
 			text = t.Glyphs.Pass + " " + f.label
+		case fieldLane:
+			text = t.Glyphs.LaneRule + " " + f.label
 		}
 		label := pad("  "+text, labelWidth)
 		labelStyle := t.Body
@@ -351,7 +462,11 @@ func (m Model) renderSettings() string {
 		}
 		b.WriteString(line + "\n")
 		if focused && f.desc != "" {
-			b.WriteString(t.Faint.Render(truncate("    "+f.desc, width)) + "\n")
+			descStyle := t.Faint
+			if f.kind == fieldLane && !readiness.ValidLaneRule(m.settings.Lanes[f.lane].Rule) {
+				descStyle = t.Danger
+			}
+			b.WriteString(descStyle.Render(truncate("    "+f.desc, width)) + "\n")
 		}
 	}
 
@@ -383,6 +498,58 @@ func (m Model) renderFieldValue(f settingsField, focused bool, width int) string
 			return t.Faint.Render(t.Glyphs.Enter + " edit")
 		}
 		return t.Dim.Render(truncate(v, maxInt(1, width))) + t.Faint.Render("  "+t.Glyphs.Enter+" edit")
+	case fieldLane:
+		return m.renderLaneValue(f, width)
+	}
+	return ""
+}
+
+func (m Model) renderLaneValue(f settingsField, width int) string {
+	t := m.theme
+	lane := m.settings.Lanes[f.lane]
+
+	swatch := " " + t.Glyphs.LaneRule
+	plainTail, tail := swatch, t.LaneAccent(model.Column(f.lane)).Render(swatch)
+	if lane.Sort != "" {
+		plainTail += " " + lane.Sort
+		tail += t.Warn.Render(" " + lane.Sort)
+	}
+
+	style := t.Dim
+	if !readiness.ValidLaneRule(lane.Rule) {
+		style = t.Danger
+	}
+	room := maxInt(1, width-textWidth(plainTail))
+	return style.Render(truncate(lane.Rule, room)) + tail
+}
+
+func laneDesc(rule string) string {
+	if err := readiness.LaneRuleError(rule); err != "" {
+		return err
+	}
+	return "enter edits the rule"
+}
+
+var laneSorts = laneSortValues()
+
+func laneSortValues() []string {
+	out := make([]string, 0, len(model.SortModes)+1)
+	out = append(out, "")
+	for _, mode := range model.SortModes {
+		out = append(out, mode.String())
+	}
+	return out
+}
+
+func (m Model) sectionHint(section string) string {
+	switch section {
+	case sectionRepos:
+		return "a add " + m.theme.Glyphs.Dot + " d remove"
+	case sectionBoard:
+		if m.settings.LaneOrder == config.LaneOrderCustom {
+			dot := " " + m.theme.Glyphs.Dot + " "
+			return "c colour" + dot + "s sort" + dot + "J/K move" + dot + "d remove"
+		}
 	}
 	return ""
 }
@@ -444,8 +611,9 @@ func splitList(v string) []string {
 func splitSpace(v string) []string { return strings.Fields(v) }
 
 func laneSlugList() []string {
-	out := make([]string, 0, len(model.ActionFirstColumns))
-	for _, c := range model.ActionFirstColumns {
+	cols := model.AllColumns()
+	out := make([]string, 0, len(cols))
+	for _, c := range cols {
 		out = append(out, c.Slug())
 	}
 	return out

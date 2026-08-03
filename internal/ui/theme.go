@@ -140,9 +140,6 @@ type Theme struct {
 	ChipFilled lipgloss.Style
 	Chip       lipgloss.Style
 	Overlay    lipgloss.Style
-
-	lane     map[model.Column]lipgloss.AdaptiveColor
-	laneFade map[model.Column]lipgloss.AdaptiveColor
 }
 
 func NewTheme(mode string, ascii bool) Theme {
@@ -242,42 +239,63 @@ func NewTheme(mode string, ascii bool) Theme {
 		t.Overlay = t.Overlay.BorderForeground(toneRule.adaptive()).Background(toneBgChrome.adaptive())
 	}
 
-	laneTones := map[model.Column]tone{
-		model.ColReadyToMerge:     toneOK,
-		model.ColNeedsReview:      toneAccent,
-		model.ColChangesRequested: toneReview,
-		model.ColCIRunning:        toneWarn,
-		model.ColBlocked:          toneDanger,
-		model.ColDraft:            toneTextFaint,
-	}
-	t.lane = make(map[model.Column]lipgloss.AdaptiveColor, len(laneTones))
-	t.laneFade = make(map[model.Column]lipgloss.AdaptiveColor, len(laneTones))
-	for col, c := range laneTones {
-		t.lane[col] = c.adaptive()
-		t.laneFade[col] = c.blend(toneBg, laneRuleBlend).adaptive()
-	}
 	return t
+}
+
+var lanePalette = []tone{toneOK, toneAccent, toneReview, toneWarn, toneDanger, toneTextFaint}
+
+var namedLaneTones = map[string]tone{
+	"ready-to-merge":    toneOK,
+	"needs-review":      toneAccent,
+	"changes-requested": toneReview,
+	"ci-running":        toneWarn,
+	"blocked":           toneDanger,
+	"draft":             toneTextFaint,
+}
+
+var laneColors = []string{"", "green", "cyan", "purple", "amber", "red", "grey"}
+
+var laneColorTones = map[string]tone{
+	"green":  toneOK,
+	"cyan":   toneAccent,
+	"purple": toneReview,
+	"amber":  toneWarn,
+	"red":    toneDanger,
+	"grey":   toneTextFaint,
+}
+
+func laneTone(c model.Column) tone {
+	if t, ok := laneColorTones[c.Def().Color]; ok {
+		return t
+	}
+	if t, ok := namedLaneTones[c.Slug()]; ok {
+		return t
+	}
+	if int(c) < 0 {
+		return toneAccent
+	}
+	return lanePalette[int(c)%len(lanePalette)]
 }
 
 func (t Theme) LaneHeader(c model.Column) lipgloss.Style {
 	if t.NoColor {
 		return lipgloss.NewStyle().Bold(true)
 	}
-	return lipgloss.NewStyle().Bold(true).Foreground(t.lane[c])
+	return lipgloss.NewStyle().Bold(true).Foreground(laneTone(c).adaptive())
 }
 
 func (t Theme) LaneRule(c model.Column) lipgloss.Style {
 	if t.NoColor {
 		return lipgloss.NewStyle().Faint(true)
 	}
-	return lipgloss.NewStyle().Foreground(t.laneFade[c])
+	return lipgloss.NewStyle().Foreground(laneTone(c).blend(toneBg, laneRuleBlend).adaptive())
 }
 
 func (t Theme) LaneAccent(c model.Column) lipgloss.Style {
 	if t.NoColor {
 		return lipgloss.NewStyle()
 	}
-	return lipgloss.NewStyle().Foreground(t.lane[c])
+	return lipgloss.NewStyle().Foreground(laneTone(c).adaptive())
 }
 
 func (t Theme) CheckStyle(s model.CheckState) lipgloss.Style {

@@ -63,7 +63,7 @@ func TestSettingsRemovesARepositoryWhateverTheCase(t *testing.T) {
 	m := testModel(t, 120, 40, ViewBoard)
 	m.settings.Repos = []string{"Acme/Payments-API", "acme/device-gateway"}
 
-	out, _ := m.removeRepo([]settingsField{{kind: fieldRepo, repo: "acme/payments-api"}})
+	out, _ := m.removeField([]settingsField{{kind: fieldRepo, repo: "acme/payments-api"}})
 	got := out.(Model)
 
 	if len(got.settings.Repos) != 1 || got.settings.Repos[0] != "acme/device-gateway" {

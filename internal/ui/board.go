@@ -148,7 +148,11 @@ func (m Model) renderCard(pr model.PullRequest, col model.Column, width int, sel
 		lines = append(lines, t.Warn.Render(m.spinnerFrame()+" "+label))
 	}
 
-	rule := t.LaneAccent(col).Render(t.Glyphs.LaneRule)
+	accent := t.LaneAccent(col)
+	if m.policy.AwaitingApproval(pr) {
+		accent = t.Accent
+	}
+	rule := accent.Render(t.Glyphs.LaneRule)
 	marker := " "
 	rowStyle := lipgloss.NewStyle()
 	if selected {
@@ -230,9 +234,10 @@ func (m Model) hasSignals(pr model.PullRequest, col model.Column) bool {
 	counts := pr.CheckCounts()
 	switch {
 	case counts.Failed > 0,
+		m.policy.AwaitingApproval(pr),
 		pr.HasConflicts(),
 		pr.ChangesRequested > 0,
-		col == model.ColReadyToMerge && pr.Approvals >= m.policy.RequiredApprovals,
+		m.policy.ReadyToMerge(pr) && pr.Approvals >= m.policy.RequiredApprovals,
 		counts.Total > 0 && counts.Passed < counts.Total,
 		pr.BehindBy > 0:
 		return true
@@ -259,6 +264,10 @@ func (m Model) cardSignals(pr model.PullRequest, col model.Column, width int) st
 	counts := pr.CheckCounts()
 	var tokens []signalToken
 
+	if m.policy.AwaitingApproval(pr) {
+		tokens = append(tokens, signalToken{
+			t.Accent.Render(t.Glyphs.Pending + " awaiting approval"), false})
+	}
 	if counts.Failed > 0 {
 		tokens = append(tokens, signalToken{t.Danger.Render(fmt.Sprintf("%s %d %s failing",
 			t.Glyphs.Fail, counts.Failed, plural(counts.Failed, "check", "checks"))), false})
@@ -270,7 +279,7 @@ func (m Model) cardSignals(pr model.PullRequest, col model.Column, width int) st
 		tokens = append(tokens, signalToken{
 			t.Review.Render(fmt.Sprintf("%d change req", pr.ChangesRequested)), true})
 	}
-	if col == model.ColReadyToMerge && pr.Approvals >= m.policy.RequiredApprovals {
+	if m.policy.ReadyToMerge(pr) && pr.Approvals >= m.policy.RequiredApprovals {
 		tokens = append(tokens, signalToken{t.OK.Render(t.Glyphs.Pass + " approved"), true})
 	}
 	if counts.Failed == 0 && counts.Total > 0 && counts.Passed < counts.Total {

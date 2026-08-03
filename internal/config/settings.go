@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"time"
+
+	"github.com/dreuse/prdash/internal/model"
 )
 
 const (
@@ -17,7 +19,18 @@ const (
 	ScopeAny      = "any"
 	ScopeMine     = "mine"
 	ScopeAuthored = "authored"
+
+	LaneOrderReady    = "ready"
+	LaneOrderPipeline = "pipeline"
+	LaneOrderCustom   = "custom"
 )
+
+type Lane struct {
+	Name  string `json:"name"`
+	Rule  string `json:"rule"`
+	Color string `json:"color,omitempty"`
+	Sort  string `json:"sort,omitempty"`
+}
 
 type Settings struct {
 	Schema int `json:"schema"`
@@ -32,6 +45,7 @@ type Settings struct {
 
 	LaneOrder   string   `json:"lane_order"`
 	HiddenLanes []string `json:"hidden_lanes"`
+	Lanes       []Lane   `json:"lanes"`
 
 	CIRunsWindow   int  `json:"ci_runs_window"`
 	CIRecentHours  int  `json:"ci_recent_hours"`
@@ -59,7 +73,7 @@ func DefaultSettings() Settings {
 		RefreshSeconds:    30,
 		Theme:             "auto",
 		ASCII:             false,
-		LaneOrder:         "ready",
+		LaneOrder:         LaneOrderReady,
 		CIRunsWindow:      20,
 		CIRecentHours:     24,
 		CIFailuresOnly:    false,
@@ -119,6 +133,43 @@ func (s *Settings) normalise() {
 		s.SavedFilters = append(s.SavedFilters, "")
 	}
 	s.Repos = dedupeFold(s.Repos)
+
+	kept := make([]Lane, 0, len(s.Lanes))
+	for _, lane := range s.Lanes {
+		lane.Name = strings.TrimSpace(lane.Name)
+		lane.Rule = strings.TrimSpace(lane.Rule)
+		lane.Color = strings.TrimSpace(lane.Color)
+		lane.Sort = strings.TrimSpace(lane.Sort)
+		if _, ok := model.SortModeBySlug(lane.Sort); !ok {
+			lane.Sort = ""
+		}
+		if lane.Name != "" && lane.Rule != "" {
+			kept = append(kept, lane)
+		}
+	}
+	s.Lanes = kept
+
+	switch s.LaneOrder {
+	case LaneOrderReady, LaneOrderPipeline:
+	case LaneOrderCustom:
+		if len(s.Lanes) == 0 {
+			s.LaneOrder = d.LaneOrder
+		}
+	default:
+		s.LaneOrder = d.LaneOrder
+	}
+}
+
+func (s Settings) LaneDefs() []model.LaneDef {
+	if s.LaneOrder != LaneOrderCustom {
+		return nil
+	}
+	out := make([]model.LaneDef, 0, len(s.Lanes))
+	for _, lane := range s.Lanes {
+		out = append(out, model.LaneDef{
+			Name: lane.Name, Rule: lane.Rule, Color: lane.Color, Sort: lane.Sort})
+	}
+	return out
 }
 
 func dedupeFold(list []string) []string {

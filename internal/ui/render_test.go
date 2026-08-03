@@ -193,6 +193,25 @@ func TestHealthyCardIsQuietAndAbnormalCardIsNot(t *testing.T) {
 	}
 }
 
+func TestApprovalWaitCardSaysSoAndKeepsItsHeight(t *testing.T) {
+	m := testModel(t, 200, 40, ViewBoard)
+	pr := model.PullRequest{
+		Repo: "acme/payments-api", Number: 1, Title: "waiting", Author: "someone",
+		CreatedAt: nowMinusDays(3), UpdatedAt: nowMinusDays(1),
+		Mergeable: model.MergeableYes, MergeStateStatus: "BLOCKED",
+		Approvals: m.policy.RequiredApprovals,
+		Checks:    []model.Check{{Name: "build", State: model.CheckPassed}},
+	}
+	signals := stripANSI(m.cardSignals(pr, model.ColBlocked, 40))
+	if !strings.Contains(signals, "awaiting approval") {
+		t.Fatalf("a protection-blocked card must say it is waiting on reviews, got %q", signals)
+	}
+	card := m.renderCard(pr, model.ColBlocked, 40, false)
+	if lines := strings.Split(card, "\n"); len(lines) != m.cardHeight(pr, model.ColBlocked) {
+		t.Fatalf("card rendered %d lines but reserved %d", len(lines), m.cardHeight(pr, model.ColBlocked))
+	}
+}
+
 func withChecks(pr model.PullRequest, state model.CheckState) model.PullRequest {
 	pr.Checks = []model.Check{{Name: "build", State: state}}
 	return pr

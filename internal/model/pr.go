@@ -17,6 +17,63 @@ const (
 	ColDraft
 )
 
+type LaneDef struct {
+	Name  string
+	Rule  string
+	Color string
+	Sort  string
+}
+
+func (c Column) Def() LaneDef {
+	if int(c) < 0 || int(c) >= len(activeLanes) {
+		return LaneDef{}
+	}
+	return activeLanes[c]
+}
+
+const (
+	CatchAllRule  = "*"
+	OtherLaneName = "OTHER"
+)
+
+var builtinLanes = []LaneDef{
+	ColReadyToMerge:     {Name: "READY TO MERGE"},
+	ColNeedsReview:      {Name: "NEEDS REVIEW"},
+	ColChangesRequested: {Name: "CHANGES REQUESTED"},
+	ColCIRunning:        {Name: "CI RUNNING"},
+	ColBlocked:          {Name: "BLOCKED"},
+	ColDraft:            {Name: "DRAFT"},
+}
+
+var activeLanes = builtinLanes
+
+func SetLanes(defs []LaneDef) {
+	if len(defs) == 0 {
+		activeLanes = builtinLanes
+		return
+	}
+	for _, d := range defs {
+		if strings.TrimSpace(d.Rule) == CatchAllRule {
+			activeLanes = defs
+			return
+		}
+	}
+	activeLanes = append(append([]LaneDef(nil), defs...),
+		LaneDef{Name: OtherLaneName, Rule: CatchAllRule})
+}
+
+func Lanes() []LaneDef { return activeLanes }
+
+func CustomLanes() bool { return &activeLanes[0] != &builtinLanes[0] }
+
+func AllColumns() []Column {
+	out := make([]Column, 0, len(activeLanes))
+	for i := range activeLanes {
+		out = append(out, Column(i))
+	}
+	return out
+}
+
 var ActionFirstColumns = []Column{
 	ColReadyToMerge,
 	ColNeedsReview,
@@ -36,31 +93,22 @@ var PipelineColumns = []Column{
 }
 
 func (c Column) String() string {
-	switch c {
-	case ColReadyToMerge:
-		return "READY TO MERGE"
-	case ColNeedsReview:
-		return "NEEDS REVIEW"
-	case ColChangesRequested:
-		return "CHANGES REQUESTED"
-	case ColCIRunning:
-		return "CI RUNNING"
-	case ColBlocked:
-		return "BLOCKED"
-	case ColDraft:
-		return "DRAFT"
+	if int(c) < 0 || int(c) >= len(activeLanes) {
+		return "UNKNOWN"
 	}
-	return "UNKNOWN"
+	return activeLanes[c].Name
 }
 
-func (c Column) Slug() string {
-	return strings.ReplaceAll(strings.ToLower(c.String()), " ", "-")
+func (c Column) Slug() string { return Slugify(c.String()) }
+
+func Slugify(name string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), " ", "-")
 }
 
 func ColumnBySlug(s string) (Column, bool) {
-	for _, c := range ActionFirstColumns {
-		if c.Slug() == s {
-			return c, true
+	for i := range activeLanes {
+		if Column(i).Slug() == s {
+			return Column(i), true
 		}
 	}
 	return 0, false

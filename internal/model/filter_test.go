@@ -387,3 +387,63 @@ func TestNoKey(t *testing.T) {
 		t.Error("no: only takes assignee, reviewer or label")
 	}
 }
+
+func TestLaneRuleVocabulary(t *testing.T) {
+	parse := []struct {
+		raw   string
+		valid bool
+	}{
+		{"is:ready", true},
+		{"is:running", true},
+		{"is:changes-requested", true},
+		{"is:blocked", true},
+		{"is:behind", true},
+		{"approvals:>=2", true},
+		{"approvals:0", true},
+		{"approvals:>abc", false},
+	}
+	for _, tc := range parse {
+		if got := ParseFilter(tc.raw).Valid(); got != tc.valid {
+			t.Errorf("ParseFilter(%q).Valid() = %v, want %v", tc.raw, got, tc.valid)
+		}
+	}
+
+	running := samplePR()
+	running.Checks = []Check{{State: CheckPassed}, {State: CheckRunning}}
+
+	changes := samplePR()
+	changes.ChangesRequested = 2
+
+	protected := samplePR()
+	protected.MergeStateStatus = "BLOCKED"
+
+	approved := samplePR()
+	approved.Approvals = 2
+
+	match := []struct {
+		query string
+		pr    PullRequest
+		ctx   FilterContext
+		want  bool
+	}{
+		{"is:ready", samplePR(), FilterContext{Ready: true}, true},
+		{"is:ready", samplePR(), FilterContext{}, false},
+		{"-is:ready", samplePR(), FilterContext{}, true},
+		{"is:running", running, FilterContext{}, true},
+		{"is:running", samplePR(), FilterContext{}, false},
+		{"is:changes-requested", changes, FilterContext{}, true},
+		{"is:changes-requested", samplePR(), FilterContext{}, false},
+		{"is:blocked", protected, FilterContext{}, true},
+		{"is:blocked", samplePR(), FilterContext{}, false},
+		{"is:behind", samplePR(), FilterContext{}, true}, // sample is 19 behind
+		{"approvals:>=2", approved, FilterContext{}, true},
+		{"approvals:>=2", samplePR(), FilterContext{}, false},
+		{"approvals:0", samplePR(), FilterContext{}, true},
+		{"is:conflict,failing", samplePR(), FilterContext{}, false},
+	}
+	for _, tc := range match {
+		if got := ParseFilter(tc.query).Match(tc.pr, tc.ctx); got != tc.want {
+			t.Errorf("%q matched = %v, want %v", tc.query, got, tc.want)
+		}
+	}
+}

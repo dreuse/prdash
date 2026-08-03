@@ -152,18 +152,8 @@ func (m Model) filterValueCandidates(key, prefix string) ([]candidate, int) {
 		}
 	case "label":
 		values = m.knownLabels()
-	case "state":
-		for _, c := range model.ActionFirstColumns {
-			values = append(values, c.Slug())
-		}
-	case "is":
-		values = []string{"draft", "stale", "conflict", "failing", "approved"}
-	case "no":
-		values = []string{"assignee", "reviewer", "label"}
-	case "behind":
-		values = []string{">10", ">50", ">100"}
-	case "age":
-		values = []string{">7d", ">30d", ">180d"}
+	case "state", "is", "no", "behind", "age", "approvals":
+		values = model.FilterValues(key)
 	default:
 		return nil, 0
 	}

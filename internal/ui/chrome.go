@@ -151,6 +151,16 @@ func (m Model) renderHeader() string {
 	}
 }
 
+const blockedLaneSlug = "blocked"
+
+func (m Model) blockedCount() int {
+	col, ok := model.ColumnBySlug(blockedLaneSlug)
+	if !ok {
+		return 0
+	}
+	return len(m.lanes[col])
+}
+
 func (m Model) headerStatus(drop int) string {
 	t := m.theme
 	var parts []string
@@ -158,7 +168,7 @@ func (m Model) headerStatus(drop int) string {
 	if n := m.needsYou(); n > 0 && drop < 4 {
 		parts = append(parts, t.OK.Background(chromeBg(t)).Render(fmt.Sprintf("%d need you", n)))
 	}
-	if blocked := len(m.lanes[model.ColBlocked]); blocked > 0 && drop < 1 {
+	if blocked := m.blockedCount(); blocked > 0 && drop < 1 {
 		parts = append(parts, t.ChromeDim.Render(fmt.Sprintf("%d blocked", blocked)))
 	}
 	if drop < 2 {

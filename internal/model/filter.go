@@ -11,6 +11,7 @@ const StaleAfter = 30 * 24 * time.Hour
 type FilterContext struct {
 	Viewer string
 	Column Column
+	Ready  bool
 }
 
 type FilterToken struct {
@@ -28,25 +29,37 @@ type Filter struct {
 	Tokens []FilterToken
 }
 
-var FilterKeys = []string{"author", "assignee", "reviewer", "repo", "label", "state", "is", "no", "behind", "age"}
+var FilterKeys = []string{"author", "assignee", "reviewer", "repo", "label", "state", "is", "no", "behind", "age", "approvals"}
 
 var filterValues = map[string][]string{
-	"author":   {"@me", "any"},
-	"assignee": {"@me", "any", "none"},
-	"reviewer": {"@me", "any", "none"},
-	"is":       {"draft", "stale", "conflict", "failing", "approved"},
-	"no":       {"assignee", "reviewer", "label"},
-	"state":    laneSlugs(),
-	"behind":   {">10", ">50", ">100"},
-	"age":      {">7d", ">30d", ">180d"},
+	"author":    {"@me", "any"},
+	"assignee":  {"@me", "any", "none"},
+	"reviewer":  {"@me", "any", "none"},
+	"is":        isValues,
+	"no":        {"assignee", "reviewer", "label"},
+	"behind":    {">10", ">50", ">100"},
+	"age":       {">7d", ">30d", ">180d"},
+	"approvals": {"0", ">=1", ">=2"},
+}
+
+var isValues = []string{
+	"draft", "stale", "conflict", "failing", "approved",
+	"ready", "running", "changes-requested", "blocked", "behind",
 }
 
 func laneSlugs() []string {
-	out := make([]string, 0, len(ActionFirstColumns))
-	for _, c := range ActionFirstColumns {
+	out := make([]string, 0, len(activeLanes))
+	for _, c := range AllColumns() {
 		out = append(out, c.Slug())
 	}
 	return out
+}
+
+func FilterValues(key string) []string {
+	if key == "state" {
+		return laneSlugs()
+	}
+	return filterValues[key]
 }
 
 func ParseFilter(raw string) Filter {
@@ -145,14 +158,14 @@ func validValue(key, op, value string) bool {
 		return false
 	}
 	switch key {
-	case "behind":
+	case "behind", "approvals":
 		_, err := strconv.Atoi(value)
 		return err == nil
 	case "age":
 		_, ok := parseDays(value)
 		return ok
 	case "is":
-		return contains(filterValues["is"], strings.ToLower(value))
+		return contains(isValues, strings.ToLower(value))
 	case "state":
 		_, ok := ColumnBySlug(strings.ToLower(value))
 		return ok
@@ -297,7 +310,7 @@ func (t FilterToken) matchValue(p PullRequest, ctx FilterContext, raw string) bo
 		col, ok := ColumnBySlug(strings.ToLower(value))
 		return ok && col == ctx.Column
 	case "is":
-		return matchIs(p, value)
+		return matchIs(p, ctx, value)
 	case "no":
 		switch strings.ToLower(value) {
 		case "assignee":
@@ -310,6 +323,8 @@ func (t FilterToken) matchValue(p PullRequest, ctx FilterContext, raw string) bo
 		return false
 	case "behind":
 		return compare(p.BehindBy, t.Op, atoi(value))
+	case "approvals":
+		return compare(p.Approvals, t.Op, atoi(value))
 	case "age":
 		days, ok := parseDays(value)
 		return ok && compare(int(p.Age().Hours()/24), t.Op, days)
@@ -317,7 +332,7 @@ func (t FilterToken) matchValue(p PullRequest, ctx FilterContext, raw string) bo
 	return true
 }
 
-func matchIs(p PullRequest, value string) bool {
+func matchIs(p PullRequest, ctx FilterContext, value string) bool {
 	switch strings.ToLower(value) {
 	case "draft":
 		return p.IsDraft
@@ -329,6 +344,16 @@ func matchIs(p PullRequest, value string) bool {
 		return p.CheckCounts().Failed > 0
 	case "approved":
 		return p.Approvals > 0
+	case "ready":
+		return ctx.Ready
+	case "running":
+		return p.ChecksState() == CheckRunning
+	case "changes-requested":
+		return p.ChangesRequested > 0
+	case "blocked":
+		return p.Blocked()
+	case "behind":
+		return p.BehindBy > 0
 	}
 	return false
 }
@@ -362,7 +387,7 @@ func CycleFilterValue(raw string) string {
 	if !ok {
 		return raw
 	}
-	values := filterValues[strings.ToLower(key)]
+	values := FilterValues(strings.ToLower(key))
 	if len(values) == 0 {
 		return raw
 	}
