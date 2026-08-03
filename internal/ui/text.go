@@ -2,7 +2,6 @@ package ui
 
 import (
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -25,19 +24,6 @@ func truncate(s string, width int) string {
 		tail = ""
 	}
 	return runewidth.Truncate(s, width, tail)
-}
-
-func truncateASCII(s string, width int, ascii bool) string {
-	if !ascii {
-		return truncate(s, width)
-	}
-	if width <= 0 {
-		return ""
-	}
-	if runewidth.StringWidth(s) <= width {
-		return s
-	}
-	return runewidth.Truncate(s, width, "..")
 }
 
 func truncateStyled(s string, width int) string {
@@ -86,16 +72,6 @@ func fillLine(s string, width int) string {
 	return s
 }
 
-func joinDot(glyph string, parts ...string) string {
-	kept := parts[:0]
-	for _, p := range parts {
-		if p != "" {
-			kept = append(kept, p)
-		}
-	}
-	return strings.Join(kept, " "+glyph+" ")
-}
-
 func maxInt(a, b int) int {
 	if a > b {
 		return a
@@ -126,9 +102,3 @@ func wrapIndex(i, n int) int {
 	}
 	return ((i % n) + n) % n
 }
-
-func nowMinusDays(n int) time.Time { return time.Now().Add(-time.Duration(n) * 24 * time.Hour) }
-
-func stripANSI(s string) string { return ansi.Strip(s) }
-
-func lipglossWidth(s string) int { return lipgloss.Width(s) }

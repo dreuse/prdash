@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dreuse/prdash/internal/github"
 )
@@ -308,5 +307,3 @@ func (m Model) renderRepoPicker() string {
 }
 
 func configHint() string { return "the settings overlay (,)" }
-
-var _ = lipgloss.JoinVertical
