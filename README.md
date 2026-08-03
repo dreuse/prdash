@@ -62,8 +62,9 @@ go build -o prdash .
 
 ### Keep it updated
 
-`prdash` checks for a newer release in the background and prints a one-line notice when
-you quit. Install it over the running binary with:
+The running version sits in the bottom right of the dashboard. `prdash` checks for a newer
+release on start and, when there is one, says so once and leaves `v0.2.0 → v0.3.0` in that
+corner for the rest of the session. Install it over the running binary with:
 
 ```sh
 prdash --update
