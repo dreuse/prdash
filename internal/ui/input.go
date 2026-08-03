@@ -19,6 +19,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if kind, ok := m.overlay(); ok {
 		return m.handleOverlayKey(kind, msg)
 	}
+	if m.chord != "" && msg.Type == tea.KeyEscape {
+		m.chord = ""
+		return m, nil
+	}
+	if handled, mm, cmd := m.handleChord(msg); handled {
+		return mm, cmd
+	}
 	if handled, mm, cmd := m.handleGlobalKey(msg); handled {
 		return mm, cmd
 	}
@@ -72,6 +79,11 @@ func (m Model) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	case key.Matches(msg, k.Back):
 		if m.view == ViewCI && m.logs.open {
 			m.logs.close()
+			return true, m, nil
+		}
+		if m.view == ViewBoard && m.split && m.detail.diff {
+			m.detail.diff = false
+			m.detail.rewind()
 			return true, m, nil
 		}
 		if !m.filter.Empty() {
@@ -141,37 +153,62 @@ func (m Model) handleBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	lane := m.currentLane()
 	row := m.laneRow()
 
+	if m.split && m.detail.focus {
+		return m.handleDetailKey(msg)
+	}
+
 	switch {
 	case key.Matches(msg, k.Down):
 		if row+1 < len(lane) {
 			m.sel = lane[row+1].Key()
 		}
+		return m.selectionMoved()
 	case key.Matches(msg, k.Up):
 		if row > 0 {
 			m.sel = lane[row-1].Key()
 		}
+		return m.selectionMoved()
 	case key.Matches(msg, k.Top):
 		if len(lane) > 0 {
 			m.sel = lane[0].Key()
 		}
+		return m.selectionMoved()
 	case key.Matches(msg, k.End):
 		if len(lane) > 0 {
 			m.sel = lane[len(lane)-1].Key()
 		}
+		return m.selectionMoved()
 	case key.Matches(msg, k.Left):
-		return m.moveLane(-1), m.persist()
+		return m.moveLane(-1).selectionMoved()
 	case key.Matches(msg, k.Right):
-		return m.moveLane(1), m.persist()
+		return m.moveLane(1).selectionMoved()
+	case key.Matches(msg, k.Focus):
+		if m.split {
+			m.detail.focus = true
+		}
+		return m, nil
 	case key.Matches(msg, k.Split):
 		m.split = !m.split
+		m.detail.focus = false
+		m.detail.rewind()
 		return m, nil
+	case key.Matches(msg, k.SplitGrow):
+		return m.resizeSplit(1)
+	case key.Matches(msg, k.SplitShrink):
+		return m.resizeSplit(-1)
+	case key.Matches(msg, k.Diff):
+		pr, ok := m.selectedPR()
+		if !ok {
+			return m, nil
+		}
+		m.split = true
+		return m.toggleDiff(pr)
 	case key.Matches(msg, k.Expand):
 		m.expanded[passedChecks] = !m.expanded[passedChecks]
 		return m, nil
 	default:
 		return m.handlePRAction(msg)
 	}
-	return m, m.persist()
 }
 
 func (m Model) moveLane(delta int) Model {

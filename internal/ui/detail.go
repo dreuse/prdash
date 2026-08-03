@@ -4,49 +4,265 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dreuse/prdash/internal/model"
 )
 
 const (
-	passedChecks    = "checks"
-	detailTwoColumn = 140
-	detailColumnGap = 4
+	passedChecks      = "checks"
+	detailTwoColumn   = 140
+	detailColumnGap   = 4
+	maxDetailComments = 3
+	maxDetailCommits  = 5
+	commentBodyLines  = 2
+	commentGutter     = 2
+	oidWidth          = 7
+	detailChromeRows  = 2
 )
+
+type detailPane struct {
+	focus   bool
+	diff    bool
+	pr      model.PullRequest
+	lines   []string
+	scroll  int
+	loading bool
+	err     error
+	gen     int
+}
+
+func (p *detailPane) rewind() {
+	p.scroll = 0
+	p.lines = nil
+	p.err = nil
+	p.loading = false
+}
 
 func (m Model) renderSplit(pr model.PullRequest, width, height int) string {
 	t := m.theme
-	rule := t.HorizontalRule(width)
-	body := m.renderDetail(pr, width, maxInt(1, height-1))
-	return rule + "\n" + body
+	rows := maxInt(1, height-detailChromeRows)
+	body, indicator := m.detailBody(pr, rows, width)
+
+	head := fillLine(spread(width, m.detailLabel(pr), indicator), width)
+	if m.detail.focus {
+		head = t.Selected.Render(head)
+	}
+	return t.HorizontalRule(width) + "\n" + head + "\n" + body
 }
 
-func (m Model) renderDetail(pr model.PullRequest, width, height int) string {
+func (m Model) detailLabel(pr model.PullRequest) string {
+	t := m.theme
+	label := "DETAILS"
+	if m.detail.diff {
+		label = "DIFF"
+	}
+	return t.Faint.Render(label) + " " + t.Accent.Render("#"+itoa(pr.Number))
+}
+
+func (m Model) detailBody(pr model.PullRequest, rows, width int) (string, string) {
+	t := m.theme
+	hint := t.Faint.Render("tab " + t.Glyphs.LeftRight)
+	if m.detail.focus {
+		hint = t.Accent.Render("focused") + t.Faint.Render("  "+t.Glyphs.UpDown+" scroll  tab "+t.Glyphs.LeftRight)
+	}
+
+	if m.detail.diff {
+		return m.diffBody(rows, width, hint)
+	}
+
+	lines := m.detailLines(pr, width)
+	start, end := window(m.detail.scroll, len(lines), rows)
+	return strings.Join(lines[start:end], "\n"), scrollIndicator(t, end, len(lines)) + hint
+}
+
+func (m Model) detailLines(pr model.PullRequest, width int) []string {
 	if width < detailTwoColumn {
-		return lipgloss.NewStyle().MaxHeight(height).Render(
-			strings.Join(m.detailBlocks(pr, width), "\n\n"))
+		left, right := m.detailColumns(pr, width)
+		return strings.Split(strings.Join(append(left, right...), "\n\n"), "\n")
 	}
 
 	half := (width - detailColumnGap) / 2
-	left := m.detailBlocks(pr, half)
-	right := left[2:]
-	left = left[:2]
+	left, right := m.detailColumns(pr, half)
 
-	return lipgloss.NewStyle().MaxHeight(height).Render(
-		lipgloss.JoinHorizontal(lipgloss.Top,
-			lipgloss.NewStyle().Width(half).MarginRight(detailColumnGap).
-				Render(strings.Join(left, "\n\n")),
-			lipgloss.NewStyle().Width(half).Render(strings.Join(right, "\n\n"))))
+	return strings.Split(lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Width(half).MarginRight(detailColumnGap).
+			Render(strings.Join(left, "\n\n")),
+		lipgloss.NewStyle().Width(half).Render(strings.Join(right, "\n\n"))), "\n")
 }
 
-func (m Model) detailBlocks(pr model.PullRequest, width int) []string {
-	return []string{
-		m.detailHeader(pr, width),
-		m.detailChecks(pr, width),
-		m.detailReview(pr, width),
-		m.detailBranch(pr, width) + "\n\n" + m.actionChips(pr, width),
+func window(scroll, total, rows int) (int, int) {
+	start := clamp(scroll, 0, maxInt(0, total-rows))
+	return start, minInt(start+rows, total)
+}
+
+func scrollIndicator(t Theme, end, total int) string {
+	if total == 0 {
+		return ""
 	}
+	return t.Faint.Render(itoa(end) + "/" + itoa(total) + "  ")
+}
+
+func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	k := m.keys
+	pr, ok := m.selectedPR()
+	if !ok {
+		return m, nil
+	}
+
+	switch {
+	case key.Matches(msg, k.Focus):
+		m.detail.focus = false
+		return m, nil
+	case key.Matches(msg, k.Split):
+		m.split = false
+		m.detail.focus = false
+		return m, nil
+	case key.Matches(msg, k.Diff):
+		return m.toggleDiff(pr)
+	case key.Matches(msg, k.SplitGrow):
+		return m.resizeSplit(1)
+	case key.Matches(msg, k.SplitShrink):
+		return m.resizeSplit(-1)
+	case key.Matches(msg, k.Expand):
+		m.expanded[passedChecks] = !m.expanded[passedChecks]
+		return m, nil
+	case key.Matches(msg, k.NextHunk):
+		return m.jumpHunk(1)
+	case key.Matches(msg, k.PrevHunk):
+		return m.jumpHunk(-1)
+	}
+
+	rows := m.detailRows()
+	last := maxInt(0, m.detailTotal(pr, m.width)-rows)
+	if next, moved := scrollFor(msg, k, m.detail.scroll, rows, last); moved {
+		m.detail.scroll = next
+	}
+	return m, nil
+}
+
+func (m Model) selectionMoved() (tea.Model, tea.Cmd) {
+	m.detail.rewind()
+	save := m.persist()
+
+	pr, ok := m.selectedPR()
+	if !m.split || !m.detail.diff || !ok {
+		return m, save
+	}
+	next, cmd := m.bindDiff(pr)
+	return next, tea.Batch(save, cmd)
+}
+
+func (m Model) resizeSplit(delta int) (tea.Model, tea.Cmd) {
+	if !m.split {
+		return m, nil
+	}
+	l := Layout{Width: m.width, Height: m.height}
+	body := m.bodyHeight()
+	ceiling := maxInt(minSplitDetail, body-minSplitBoard)
+
+	m.state.SplitRows = clamp(l.SplitDetailHeight(body, m.state.SplitRows)+delta, minSplitDetail, ceiling)
+	return m, m.persist()
+}
+
+func (m Model) detailRows() int {
+	l := Layout{Width: m.width, Height: m.height}
+	return maxInt(1, l.SplitDetailHeight(m.bodyHeight(), m.state.SplitRows)-detailChromeRows)
+}
+
+func (m Model) detailTotal(pr model.PullRequest, width int) int {
+	if m.detail.diff {
+		return len(m.detail.lines)
+	}
+	return len(m.detailLines(pr, width))
+}
+
+func (m Model) detailColumns(pr model.PullRequest, width int) ([]string, []string) {
+	return []string{
+			m.detailHeader(pr, width),
+			m.detailChecks(pr, width),
+			m.detailReview(pr, width),
+			m.detailBranch(pr, width) + "\n\n" + m.actionChips(pr, width),
+		}, []string{
+			m.detailCommits(pr, width),
+			m.detailComments(pr, width),
+		}
+}
+
+func (m Model) detailCommits(pr model.PullRequest, width int) string {
+	t := m.theme
+	var b strings.Builder
+	b.WriteString(t.Faint.Render("COMMITS") + " " + t.Strong.Render(itoa(pr.CommitCount)))
+
+	if len(pr.Commits) == 0 {
+		b.WriteString("\n" + t.Faint.Render("no commits reported"))
+		return b.String()
+	}
+
+	shown := pr.Commits
+	if len(shown) > maxDetailCommits {
+		shown = shown[len(shown)-maxDetailCommits:]
+	}
+	for i := len(shown) - 1; i >= 0; i-- {
+		c := shown[i]
+		age := ""
+		if !c.CommittedAt.IsZero() {
+			age = " " + t.Glyphs.Dot + " " + model.ShortAge(nowSince(c.CommittedAt))
+		}
+		room := maxInt(1, width-oidWidth-textWidth(age)-commentGutter)
+		b.WriteString("\n" + t.Accent.Render(truncate(c.OID, oidWidth)) + " " +
+			t.Body.Render(truncate(c.Headline, room)) + t.Faint.Render(age))
+	}
+	if left := pr.CommitCount - len(shown); left > 0 {
+		b.WriteString("\n" + t.Faint.Render("+"+itoa(left)+" more"))
+	}
+	return b.String()
+}
+
+func (m Model) detailComments(pr model.PullRequest, width int) string {
+	t := m.theme
+	var b strings.Builder
+	b.WriteString(t.Faint.Render("COMMENTS") + " " + t.Strong.Render(itoa(pr.CommentCount)))
+
+	if len(pr.Comments) == 0 {
+		b.WriteString("\n" + t.Faint.Render("no comments yet"))
+		return b.String()
+	}
+
+	shown := pr.Comments
+	if len(shown) > maxDetailComments {
+		shown = shown[len(shown)-maxDetailComments:]
+	}
+	for i := len(shown) - 1; i >= 0; i-- {
+		c := shown[i]
+		who := c.Author
+		if strings.EqualFold(who, m.viewer) {
+			who = "you"
+		}
+		age := ""
+		if !c.CreatedAt.IsZero() {
+			age = " " + t.Glyphs.Dot + " " + model.ShortAge(nowSince(c.CreatedAt)) + " ago"
+		}
+		b.WriteString("\n" + t.Strong.Render(truncate(who, maxInt(1, width-textWidth(age)))) +
+			t.Faint.Render(age))
+		for _, line := range wrapBody(t.Dim, c.Body, maxInt(1, width-commentGutter)) {
+			b.WriteString("\n" + strings.Repeat(" ", commentGutter) + line)
+		}
+	}
+	return b.String()
+}
+
+func wrapBody(style lipgloss.Style, body string, width int) []string {
+	if strings.TrimSpace(body) == "" {
+		return nil
+	}
+	lines := strings.Split(style.Width(width).Render(body), "\n")
+	if len(lines) > commentBodyLines {
+		lines = lines[:commentBodyLines]
+	}
+	return lines
 }
 
 func (m Model) detailHeader(pr model.PullRequest, width int) string {

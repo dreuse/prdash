@@ -25,11 +25,14 @@ func (l Layout) MaxVisibleLanes() int {
 
 func (l Layout) ShowFilterBand() bool { return l.Height >= breakpointShort }
 
-func (l Layout) SplitDetailHeight(body int) int {
+func (l Layout) SplitDetailHeight(body, want int) int {
 	if body <= minSplitDetail+minSplitBoard {
 		return maxInt(1, body-minSplitBoard)
 	}
-	return clamp(body/2, minSplitDetail, body-minSplitBoard)
+	if want <= 0 {
+		want = body / 2
+	}
+	return clamp(want, minSplitDetail, body-minSplitBoard)
 }
 
 func laneWidths(counts []int, total int) []int {

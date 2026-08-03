@@ -438,6 +438,12 @@ func (m Model) handleCIKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, k.PageUp):
 		m.ciRow = clamp(m.ciRow-m.ciPage(), 0, maxInt(0, len(rows)-1))
 		return m.cursorMoved()
+	case key.Matches(msg, k.HalfPageDown):
+		m.ciRow = clamp(m.ciRow+maxInt(1, m.ciPage()/2), 0, maxInt(0, len(rows)-1))
+		return m.cursorMoved()
+	case key.Matches(msg, k.HalfPageUp):
+		m.ciRow = clamp(m.ciRow-maxInt(1, m.ciPage()/2), 0, maxInt(0, len(rows)-1))
+		return m.cursorMoved()
 
 	case key.Matches(msg, k.Focus):
 		if m.logs.open {

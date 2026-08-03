@@ -32,11 +32,7 @@ func (m Model) View() string {
 		footer = m.renderCommentBar()
 	}
 
-	chrome := 1 + lipgloss.Height(footer)
-	if filter != "" {
-		chrome++
-	}
-	bodyHeight := maxInt(1, m.height-chrome)
+	bodyHeight := m.bodyHeight()
 
 	var body string
 	switch {
@@ -62,12 +58,24 @@ func (m Model) View() string {
 	return screen
 }
 
+func (m Model) bodyHeight() int {
+	footer := m.renderFooter()
+	if m.comment.active {
+		footer = m.renderCommentBar()
+	}
+	chrome := 1 + lipgloss.Height(footer)
+	if (Layout{Width: m.width, Height: m.height}).ShowFilterBand() {
+		chrome++
+	}
+	return maxInt(1, m.height-chrome)
+}
+
 func (m Model) renderCIBody(l Layout, height int) string {
 	if !m.logs.open {
 		return m.padBody(m.renderCI(height), height)
 	}
 
-	budget := l.SplitDetailHeight(height)
+	budget := l.SplitDetailHeight(height, 0)
 	pane := m.renderLogSplit(m.width, budget)
 	paneHeight := clamp(lipgloss.Height(pane), 1, budget)
 	tableHeight := height - paneHeight
@@ -82,7 +90,7 @@ func (m Model) renderBoardBody(l Layout, height int) string {
 		return m.padBody(m.renderBoard(height), height)
 	}
 
-	budget := l.SplitDetailHeight(height)
+	budget := l.SplitDetailHeight(height, m.state.SplitRows)
 	detail := m.renderSplit(pr, m.width, budget)
 	detailHeight := clamp(lipgloss.Height(detail), 1, budget)
 	boardHeight := height - detailHeight
@@ -334,8 +342,16 @@ func (m Model) contextualKeys() []string {
 		m.chip(t.Glyphs.UpDown, "pr"),
 		m.chip(t.Glyphs.LeftRight, "lane"),
 		m.chip("v", m.splitLabel()),
-		m.chip(t.Glyphs.Enter, "open"),
 	}
+	if m.split {
+		out = append(out, m.chip("tab", "pane"), m.chip("+ -", "size"))
+		if m.detail.diff {
+			out = append(out, m.chip("} {", "hunk"), m.chip("]c", "file"), m.chip("esc", "overview"))
+		} else {
+			out = append(out, m.chip("d", "diff"))
+		}
+	}
+	out = append(out, m.chip(t.Glyphs.Enter, "open"))
 
 	pr, ok := m.selectedPR()
 	if !ok {

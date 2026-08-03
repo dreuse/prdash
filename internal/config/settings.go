@@ -61,6 +61,8 @@ type Settings struct {
 	StartupFilter string   `json:"startup_filter"`
 	SavedFilters  []string `json:"saved_filters"`
 
+	Keys map[string]string `json:"keys"`
+
 	RequiredApprovals int  `json:"required_approvals"`
 	BehindBlocks      bool `json:"behind_blocks"`
 }
@@ -212,6 +214,7 @@ type State struct {
 	Sort       string `json:"sort"`
 	SelectRepo string `json:"select_repo"`
 	SelectPR   int    `json:"select_pr"`
+	SplitRows  int    `json:"split_rows"`
 }
 
 func LoadState() State {

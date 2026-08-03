@@ -39,6 +39,18 @@ func send(m Model, keys ...string) Model {
 			msg = tea.KeyMsg{Type: tea.KeyPgUp}
 		case "esc":
 			msg = tea.KeyMsg{Type: tea.KeyEscape}
+		case "ctrl+d":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlD}
+		case "ctrl+u":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlU}
+		case "ctrl+f":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlF}
+		case "ctrl+b":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlB}
+		case "ctrl+e":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlE}
+		case "ctrl+y":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlY}
 		default:
 			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 		}

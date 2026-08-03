@@ -151,6 +151,8 @@ type Model struct {
 	ciFailuresOnly bool
 	ciCache        []model.WorkflowRun
 	logs           logPane
+	detail         detailPane
+	chord          string
 
 	confirm  confirmState
 	panel    settingsUI
@@ -181,7 +183,7 @@ func New(o Options) Model {
 		source:    o.NewSource,
 		policy:    readiness.Policy{RequiredApprovals: s.RequiredApprovals, BehindBlocks: s.BehindBlocks},
 		theme:     NewTheme(s.Theme, s.ASCII),
-		keys:      DefaultKeyMap(),
+		keys:      DefaultKeyMap().Override(s.Keys),
 		settings:  s,
 		state:     o.State,
 		repos:     o.Repos,
@@ -349,7 +351,7 @@ func spinnerTick() tea.Cmd {
 }
 
 func (m Model) needsSpinner() bool {
-	return m.loading || m.logs.loading || len(m.pending) > 0
+	return m.loading || m.logs.loading || m.detail.loading || len(m.pending) > 0
 }
 
 func (m *Model) ensureSpinner() tea.Cmd {
@@ -469,6 +471,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case logsMsg:
 		return m.applyLogs(msg)
+
+	case diffLoadMsg:
+		return m.applyDiffLoad(msg)
+
+	case diffMsg:
+		return m.applyDiff(msg)
 
 	case actionMsg:
 		return m.applyAction(msg)

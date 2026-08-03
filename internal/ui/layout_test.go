@@ -95,13 +95,36 @@ func TestVisibleLanesFollowWidth(t *testing.T) {
 
 func TestSplitLeavesBothHalvesUsable(t *testing.T) {
 	for _, body := range []int{8, 10, 20, 40, 60} {
-		detail := (Layout{Width: 200, Height: body + 3}).SplitDetailHeight(body)
+		detail := (Layout{Width: 200, Height: body + 3}).SplitDetailHeight(body, 0)
 		if detail < 1 {
 			t.Fatalf("body %d gave the detail pane %d rows", body, detail)
 		}
 		if board := body - detail; board < 1 {
 			t.Fatalf("body %d left the board %d rows", body, board)
 		}
+	}
+}
+
+func TestARequestedSplitHeightIsHonouredWithinTheFloors(t *testing.T) {
+	l := Layout{Width: 200, Height: 43}
+	body := 40
+
+	if got := l.SplitDetailHeight(body, 0); got != body/2 {
+		t.Errorf("asking for nothing must keep the old half-and-half, got %d", got)
+	}
+	if got := l.SplitDetailHeight(body, 13); got != 13 {
+		t.Errorf("a request that fits must be honoured, got %d", got)
+	}
+	if got := l.SplitDetailHeight(body, 1); got != minSplitDetail {
+		t.Errorf("the detail pane may not shrink below %d, got %d", minSplitDetail, got)
+	}
+	if got := l.SplitDetailHeight(body, 999); got != body-minSplitBoard {
+		t.Errorf("the board keeps %d rows whatever is asked, got %d", minSplitBoard, got)
+	}
+
+	tiny := minSplitDetail + minSplitBoard - 1
+	if got := (Layout{Width: 200, Height: tiny + 3}).SplitDetailHeight(tiny, 999); got != tiny-minSplitBoard {
+		t.Errorf("a body too small for both floors falls back to the board floor, got %d", got)
 	}
 }
 

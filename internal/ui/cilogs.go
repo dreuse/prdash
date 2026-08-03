@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	logDebounce   = 300 * time.Millisecond
+	paneDebounce  = 300 * time.Millisecond
 	logTabStop    = "  "
 	logNameWidth  = 24
 	logRefWidth   = 28
@@ -127,7 +127,7 @@ func (m Model) bindLog(run model.WorkflowRun) (tea.Model, tea.Cmd) {
 	m.logs.loading = true
 	m.logs.gen++
 	gen := m.logs.gen
-	return m, tea.Tick(logDebounce, func(time.Time) tea.Msg { return logLoadMsg{gen: gen} })
+	return m, tea.Tick(paneDebounce, func(time.Time) tea.Msg { return logLoadMsg{gen: gen} })
 }
 
 func (m Model) applyLogLoad(msg logLoadMsg) (tea.Model, tea.Cmd) {
@@ -162,39 +162,54 @@ func (m Model) applyLogs(msg logsMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func scrollFor(msg tea.KeyMsg, k KeyMap, cur, page, last int) (int, bool) {
+	half := maxInt(1, page/2)
+	switch {
+	case key.Matches(msg, k.Down):
+		return clamp(cur+1, 0, last), true
+	case key.Matches(msg, k.Up):
+		return clamp(cur-1, 0, last), true
+	case key.Matches(msg, k.HalfPageDown):
+		return clamp(cur+half, 0, last), true
+	case key.Matches(msg, k.HalfPageUp):
+		return clamp(cur-half, 0, last), true
+	case key.Matches(msg, k.PageDown):
+		return clamp(cur+page, 0, last), true
+	case key.Matches(msg, k.PageUp):
+		return clamp(cur-page, 0, last), true
+	case key.Matches(msg, k.Top):
+		return 0, true
+	case key.Matches(msg, k.End):
+		return last, true
+	}
+	return cur, false
+}
+
 func (m Model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := m.keys
-	page := m.logPageSize()
-	last := len(m.logs.lines)
 
 	switch {
 	case key.Matches(msg, k.Focus):
 		m.logs.focus = false
+		return m, nil
 	case key.Matches(msg, k.Logs):
 		m.logs.close()
+		return m, nil
 	case key.Matches(msg, k.FailuresOnly):
 		m.logs.failedOnly = !m.logs.failedOnly
 		mm, cmd := m.bindLog(m.logs.run)
 		return mm, tea.Batch(cmd, m.notify(m.logs.modeLabel(), toastInfo))
-	case key.Matches(msg, k.Down):
-		m.logs.scroll = clamp(m.logs.scroll+1, 0, last)
-	case key.Matches(msg, k.Up):
-		m.logs.scroll = clamp(m.logs.scroll-1, 0, last)
-	case key.Matches(msg, k.PageDown):
-		m.logs.scroll = clamp(m.logs.scroll+page, 0, last)
-	case key.Matches(msg, k.PageUp):
-		m.logs.scroll = clamp(m.logs.scroll-page, 0, last)
-	case key.Matches(msg, k.Top):
-		m.logs.scroll = 0
-	case key.Matches(msg, k.End):
-		m.logs.scroll = last
+	}
+
+	if next, moved := scrollFor(msg, k, m.logs.scroll, m.logPageSize(), len(m.logs.lines)); moved {
+		m.logs.scroll = next
 	}
 	return m, nil
 }
 
 func (m Model) logPageSize() int {
 	l := Layout{Width: m.width, Height: m.height}
-	return maxInt(1, l.SplitDetailHeight(maxInt(1, m.height-ciChromeRows))-2)
+	return maxInt(1, l.SplitDetailHeight(maxInt(1, m.height-ciChromeRows), 0)-2)
 }
 
 func (m Model) renderLogSplit(width, height int) string {

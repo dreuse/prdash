@@ -334,6 +334,23 @@ func TestPreview(t *testing.T) {
 	m.split = true
 	_ = os.WriteFile(dir+"/split-narrow.txt", []byte(m.View()), 0o644)
 
+	for _, tc := range []struct {
+		name          string
+		width, height int
+	}{
+		{"split-comments", 200, 40},
+		{"split-comments-narrow", 110, 34},
+		{"split-comments-80", 80, 24},
+	} {
+		p := selectPR(t, testModel(t, tc.width, tc.height, ViewBoard), 12009)
+		p = send(p, "v")
+		_ = os.WriteFile(dir+"/"+tc.name+".txt", []byte(p.View()), 0o644)
+
+		p = loadedDiff(t, p)
+		_ = os.WriteFile(dir+"/"+strings.Replace(tc.name, "comments", "diff", 1)+".txt",
+			[]byte(p.View()), 0o644)
+	}
+
 	m = testModel(t, 200, 40, ViewBoard)
 	m.confirm = confirmState{title: "Merge #12012?", body: "squash into master", verb: "merge", danger: true}
 	m.push(ovConfirm)
