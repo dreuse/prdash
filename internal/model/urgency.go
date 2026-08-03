@@ -67,19 +67,27 @@ func SortModeBySlug(s string) (SortMode, bool) {
 func (s SortMode) Next() SortMode { return SortMode((int(s) + 1) % len(SortModes)) }
 
 func Sort(prs []PullRequest, mode SortMode, viewer string, requiredApprovals int) {
+	if mode != SortUrgency {
+		sort.SliceStable(prs, func(i, j int) bool {
+			a, b := prs[i], prs[j]
+			switch mode {
+			case SortUpdated:
+				return a.UpdatedAt.After(b.UpdatedAt)
+			case SortAge:
+				return a.CreatedAt.Before(b.CreatedAt)
+			}
+			return a.Number > b.Number
+		})
+		return
+	}
+
+	scores := make(map[Key]int, len(prs))
+	for _, pr := range prs {
+		scores[pr.Key()] = Urgency(pr, viewer, requiredApprovals)
+	}
 	sort.SliceStable(prs, func(i, j int) bool {
 		a, b := prs[i], prs[j]
-		switch mode {
-		case SortUpdated:
-			return a.UpdatedAt.After(b.UpdatedAt)
-		case SortAge:
-			return a.CreatedAt.Before(b.CreatedAt)
-		case SortNumber:
-			return a.Number > b.Number
-		}
-		ua := Urgency(a, viewer, requiredApprovals)
-		ub := Urgency(b, viewer, requiredApprovals)
-		if ua != ub {
+		if ua, ub := scores[a.Key()], scores[b.Key()]; ua != ub {
 			return ua > ub
 		}
 		return a.UpdatedAt.After(b.UpdatedAt)
