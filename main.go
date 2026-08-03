@@ -13,6 +13,7 @@ import (
 	"github.com/dreuse/prdash/internal/config"
 	"github.com/dreuse/prdash/internal/github"
 	"github.com/dreuse/prdash/internal/ui"
+	"github.com/dreuse/prdash/internal/update"
 )
 
 const authTimeout = 15 * time.Second
@@ -28,8 +29,18 @@ func run() error {
 	mock := flag.Bool("mock", false, "use built-in sample data instead of the github api")
 	view := flag.String("view", "", "open in board or ci for this run only")
 	ascii := flag.Bool("ascii", false, "use ascii glyphs instead of unicode")
+	version := flag.Bool("version", false, "print the version and exit")
+	upgrade := flag.Bool("update", false, "install the latest release over this binary")
 	flag.Usage = usage
 	flag.Parse()
+
+	if *version {
+		fmt.Println("prdash", update.Current())
+		return nil
+	}
+	if *upgrade {
+		return selfUpdate()
+	}
 
 	settings := config.LoadSettings()
 	if *ascii {
@@ -74,7 +85,36 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	notice := update.Notice()
+	defer func() {
+		if msg := notice(); msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+		}
+	}()
 	return start(settings, fetcher, actor, source, settings.Repos, *view)
+}
+
+func selfUpdate() error {
+	ctx, cancel := context.WithTimeout(context.Background(), update.ApplyTimeout)
+	defer cancel()
+
+	latest, err := update.Latest(ctx)
+	if err != nil {
+		return err
+	}
+	current := update.Current()
+	if !update.Newer(latest, current) {
+		fmt.Printf("prdash %s is already current (latest release is %s)\n", current, latest)
+		return nil
+	}
+
+	fmt.Printf("updating prdash %s to %s\n", current, latest)
+	if err := update.Apply(ctx, latest); err != nil {
+		return err
+	}
+	fmt.Println("done")
+	return nil
 }
 
 func firstRun(settings config.Settings) (config.Settings, error) {
@@ -137,6 +177,7 @@ examples:
   prdash acme/api acme/web
   prdash --view ci
   prdash --mock
+  prdash --update
 
 flags:`))
 	flag.PrintDefaults()
