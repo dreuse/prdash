@@ -1,6 +1,7 @@
 package github
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -21,6 +22,7 @@ query($owner: String!, $name: String!, $limit: Int!) {
         url
         isDraft
         mergeable
+        mergeStateStatus
         createdAt
         updatedAt
         baseRefName
@@ -70,13 +72,23 @@ type compareTarget struct {
 	PRIndex int
 }
 
+func graphQLString(s string) string {
+	quoted, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	return string(quoted)
+}
+
 func buildCompareQuery(targets []compareTarget) string {
 	var b strings.Builder
 	b.WriteString("query {\n")
 	for _, t := range targets {
 		fmt.Fprintf(&b,
-			"  %s: repository(owner: %q, name: %q) { ref(qualifiedName: %q) { compare(headRef: %q) { behindBy } } }\n",
-			t.Alias, t.Repo.Owner, t.Repo.Name, t.Base, t.Head)
+			"  %s: repository(owner: %s, name: %s) { ref(qualifiedName: %s) { compare(headRef: %s) { behindBy } } }\n",
+			t.Alias,
+			graphQLString(t.Repo.Owner), graphQLString(t.Repo.Name),
+			graphQLString(t.Base), graphQLString(t.Head))
 	}
 	b.WriteString("}")
 	return b.String()

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/dreuse/prdash/internal/model"
 )
 
@@ -42,5 +44,18 @@ func tailLines(out []byte, n int) []string {
 	if len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}
+	for i, line := range lines {
+		lines[i] = sanitiseLogLine(line)
+	}
 	return lines
+}
+
+func sanitiseLogLine(line string) string {
+	line = ansi.Strip(line)
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || (r >= 0x20 && r != 0x7f) {
+			return r
+		}
+		return -1
+	}, line)
 }

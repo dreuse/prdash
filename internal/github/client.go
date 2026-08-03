@@ -47,9 +47,24 @@ type Repo struct {
 
 func (r Repo) String() string { return r.Owner + "/" + r.Name }
 
+func validSegment(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.':
+		default:
+			return false
+		}
+	}
+	return s != "." && s != ".."
+}
+
 func ParseRepo(s string) (Repo, error) {
 	owner, name, ok := strings.Cut(strings.TrimSpace(s), "/")
-	if !ok || owner == "" || name == "" {
+	if !ok || !validSegment(owner) || !validSegment(name) {
 		return Repo{}, fmt.Errorf("invalid repository %q: want owner/name", s)
 	}
 	return Repo{Owner: owner, Name: name}, nil

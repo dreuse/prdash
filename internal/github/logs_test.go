@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -48,7 +49,7 @@ func TestTailLinesKeepsTheEndOfTheLog(t *testing.T) {
 	var b strings.Builder
 	for i := 0; i < 50; i++ {
 		b.WriteString("line")
-		b.WriteString(itoa(i))
+		b.WriteString(strconv.Itoa(i))
 		b.WriteString("\n")
 	}
 
@@ -76,18 +77,4 @@ func TestTailLinesDropsTrailingBlank(t *testing.T) {
 	if len(got) != 1 || got[0] != "only" {
 		t.Errorf("a trailing newline should not become an empty line, got %q", got)
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [8]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }
