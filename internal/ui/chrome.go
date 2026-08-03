@@ -288,8 +288,14 @@ func (m Model) renderFooter() string {
 	t := m.theme
 	keys := m.contextualKeys()
 	version := t.ChromeFaint.Render(m.versionLabel())
-	if m.newVersion != "" {
-		version = t.Warn.Background(chromeBg(t)).Render(m.versionLabel())
+	switch {
+	case m.updating:
+		version = t.Warn.Background(chromeBg(t)).Render(m.spinnerFrame() + " updating")
+	case m.restartWanted:
+		version = t.OK.Background(chromeBg(t)).Render(m.versionLabel())
+	case m.newVersion != "":
+		version = t.Warn.Background(chromeBg(t)).Render(m.versionLabel()) +
+			t.ChromeFaint.Render("   ") + t.ChromeDim.Render("U") + t.ChromeFaint.Render(" update")
 	}
 	right := version + t.ChromeFaint.Render("   ") +
 		t.ChromeDim.Render(",") + t.ChromeFaint.Render(" settings   ") +

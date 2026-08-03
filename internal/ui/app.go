@@ -83,11 +83,12 @@ type toast struct {
 }
 
 type confirmState struct {
-	title  string
-	body   string
-	verb   string
-	danger bool
-	run    func(Model) tea.Cmd
+	title   string
+	body    string
+	verb    string
+	danger  bool
+	updates bool
+	run     func(Model) tea.Cmd
 }
 
 type Source func(repos []string) (github.Fetcher, github.Actor, error)
@@ -128,8 +129,10 @@ type Model struct {
 	viewer   string
 	emoji    EmojiSet
 
-	version    string
-	newVersion string
+	version       string
+	newVersion    string
+	updating      bool
+	restartWanted bool
 
 	order   []model.Column
 	lanes   map[model.Column][]model.PullRequest
@@ -353,7 +356,7 @@ func spinnerTick() tea.Cmd {
 }
 
 func (m Model) needsSpinner() bool {
-	return m.loading || m.logs.loading || m.detail.loading || len(m.pending) > 0
+	return m.loading || m.logs.loading || m.detail.loading || m.updating || len(m.pending) > 0
 }
 
 func (m *Model) ensureSpinner() tea.Cmd {
@@ -479,6 +482,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case diffMsg:
 		return m.applyDiff(msg)
+
+	case updateDoneMsg:
+		return m.applyUpdateDone(msg)
 
 	case actionMsg:
 		return m.applyAction(msg)

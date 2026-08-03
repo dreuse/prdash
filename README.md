@@ -64,7 +64,9 @@ go build -o prdash .
 
 The running version sits in the bottom right of the dashboard. `prdash` checks for a newer
 release on start and, when there is one, says so once and leaves `v0.2.0 → v0.3.0` in that
-corner for the rest of the session. Install it over the running binary with:
+corner for the rest of the session. Press `U` there and it confirms, downloads the release and
+replaces this binary in place, then asks you to restart — the process you are in is still the
+old one. The same thing from outside the app:
 
 ```sh
 prdash --update

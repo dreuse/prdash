@@ -76,6 +76,10 @@ func (m Model) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		save := m.persist()
 		return true, m, tea.Batch(save, m.notify("sort: "+m.sortMode.String()+"  ("+m.keys.Settings.Help().Key+" to make it permanent)", toastInfo))
 
+	case key.Matches(msg, k.Update):
+		mm, cmd := m.startUpdate()
+		return true, mm, cmd
+
 	case key.Matches(msg, k.Back):
 		if m.view == ViewCI && m.logs.open {
 			m.logs.close()

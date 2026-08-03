@@ -131,6 +131,9 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if c.run == nil {
 			return m, nil
 		}
+		if c.updates {
+			m.updating = true
+		}
 		return m, c.run(m)
 	case "n", "esc", "q":
 		m.pop()

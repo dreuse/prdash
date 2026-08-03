@@ -48,6 +48,7 @@ type KeyMap struct {
 	Expand       key.Binding
 	FailuresOnly key.Binding
 	Refresh      key.Binding
+	Update       key.Binding
 	Settings     key.Binding
 	Help         key.Binding
 	Back         key.Binding
@@ -104,6 +105,7 @@ func DefaultKeyMap() KeyMap {
 		Expand:       key.NewBinding(key.WithKeys("x", " "), key.WithHelp("x", "expand")),
 		FailuresOnly: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "failures only")),
 		Refresh:      key.NewBinding(key.WithKeys("u", "ctrl+r", "f5"), key.WithHelp("u", "refresh")),
+		Update:       key.NewBinding(key.WithKeys("U"), key.WithHelp("U", "update")),
 		Settings:     key.NewBinding(key.WithKeys(",", "S"), key.WithHelp(",", "settings")),
 		Help:         key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "keys")),
 		Back:         key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
@@ -134,7 +136,8 @@ func (k *KeyMap) index() map[string]*key.Binding {
 		"copy": &k.Copy, "clone": &k.Clone,
 		"repo": &k.Repo, "filter": &k.Filter, "sort": &k.Sort,
 		"expand": &k.Expand, "failuresonly": &k.FailuresOnly,
-		"refresh": &k.Refresh, "settings": &k.Settings, "help": &k.Help,
+		"refresh": &k.Refresh, "update": &k.Update,
+		"settings": &k.Settings, "help": &k.Help,
 		"back": &k.Back, "quit": &k.Quit,
 		"save1": &k.Save1, "save2": &k.Save2, "save3": &k.Save3, "save4": &k.Save4,
 	}
@@ -256,6 +259,7 @@ func (k KeyMap) HelpSections(g Glyphs) [][2]string {
 		{shown(k.Rebase), "update branch from base (confirms)"},
 		{shown(k.Copy, k.Clone), "copy branch name / git checkout command"},
 		{shown(k.Refresh), "force refresh"},
+		{shown(k.Update), "install the new release when one is offered, then restart"},
 
 		{"FILTER", ""},
 		{shown(k.Filter), "filter, with completion on keys and values"},
