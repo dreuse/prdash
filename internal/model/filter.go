@@ -279,7 +279,7 @@ func (t FilterToken) matchValue(p PullRequest, ctx FilterContext, raw string) bo
 	case "reviewer":
 		switch {
 		case strings.EqualFold(value, "any"):
-			return true
+			return len(p.RequestedReviewers) > 0
 		case strings.EqualFold(value, "none"):
 			return len(p.RequestedReviewers) == 0
 		}
