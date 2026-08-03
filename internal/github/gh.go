@@ -20,7 +20,17 @@ const (
 	runsPerRepo        = 20
 	compareBatchSize   = 50
 	maxConcurrentRepos = 4
+	maxCommentChars    = 240
 )
+
+func flattenComment(body string) string {
+	flat := strings.Join(strings.Fields(body), " ")
+	runes := []rune(flat)
+	if len(runes) <= maxCommentChars {
+		return flat
+	}
+	return string(runes[:maxCommentChars-1]) + "…"
+}
 
 type CLI struct {
 	Repos []Repo
@@ -198,6 +208,26 @@ type graphQLPRResponse struct {
 							} `json:"author"`
 						} `json:"nodes"`
 					} `json:"latestOpinionatedReviews"`
+					Comments struct {
+						TotalCount int `json:"totalCount"`
+						Nodes      []struct {
+							BodyText  string `json:"bodyText"`
+							CreatedAt string `json:"createdAt"`
+							Author    struct {
+								Login string `json:"login"`
+							} `json:"author"`
+						} `json:"nodes"`
+					} `json:"comments"`
+					RecentCommits struct {
+						TotalCount int `json:"totalCount"`
+						Nodes      []struct {
+							Commit struct {
+								AbbreviatedOID  string `json:"abbreviatedOid"`
+								MessageHeadline string `json:"messageHeadline"`
+								CommittedDate   string `json:"committedDate"`
+							} `json:"commit"`
+						} `json:"nodes"`
+					} `json:"recentCommits"`
 					Commits struct {
 						Nodes []struct {
 							Commit struct {
@@ -300,6 +330,22 @@ func (c *CLI) fetchPRs(ctx context.Context, repo Repo) ([]model.PullRequest, rep
 				review.State = model.ReviewChangesRequested
 			}
 			pr.Reviews = append(pr.Reviews, review)
+		}
+		pr.CommentCount = n.Comments.TotalCount
+		for _, c := range n.Comments.Nodes {
+			pr.Comments = append(pr.Comments, model.Comment{
+				Author:    c.Author.Login,
+				Body:      flattenComment(c.BodyText),
+				CreatedAt: parseTime(c.CreatedAt),
+			})
+		}
+		pr.CommitCount = n.RecentCommits.TotalCount
+		for _, c := range n.RecentCommits.Nodes {
+			pr.Commits = append(pr.Commits, model.Commit{
+				OID:         c.Commit.AbbreviatedOID,
+				Headline:    c.Commit.MessageHeadline,
+				CommittedAt: parseTime(c.Commit.CommittedDate),
+			})
 		}
 		if len(n.Commits.Nodes) > 0 {
 			rollup := n.Commits.Nodes[0].Commit.StatusCheckRollup

@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/dreuse/prdash/internal/model"
@@ -26,6 +27,31 @@ func (m *Mock) Close(context.Context, model.PullRequest) error           { retur
 func (m *Mock) Rerun(context.Context, model.PullRequest) error           { return nil }
 func (m *Mock) RerunRun(context.Context, model.WorkflowRun) error        { return nil }
 func (m *Mock) UpdateBranch(context.Context, model.PullRequest) error    { return nil }
+
+func (m *Mock) Diff(_ context.Context, pr model.PullRequest) ([]string, error) {
+	lines := []string{
+		"diff --git a/internal/ledger/entry.go b/internal/ledger/entry.go",
+		"index 9c2f1a0..3ab77e4 100644",
+		"--- a/internal/ledger/entry.go",
+		"+++ b/internal/ledger/entry.go",
+		"@@ -18,7 +18,9 @@ type Entry struct {",
+		" \tID       int64",
+		" \tAmount   Money",
+		"-\tKind     string",
+		"+\tKind     string",
+		"+\tCategory string",
+		" }",
+	}
+	for i := 0; i < pr.Changed; i++ {
+		lines = append(lines,
+			"diff --git a/internal/ledger/file"+strconv.Itoa(i)+".go b/internal/ledger/file"+strconv.Itoa(i)+".go",
+			"@@ -1,4 +1,4 @@",
+			"-\told line "+strconv.Itoa(i),
+			"+\tnew line "+strconv.Itoa(i),
+			" \tcontext")
+	}
+	return lines, nil
+}
 
 func (m *Mock) RunLog(_ context.Context, run model.WorkflowRun, failedOnly bool) ([]string, error) {
 	if run.InProgress() {
@@ -119,6 +145,20 @@ func (m *Mock) Fetch(context.Context) (Snapshot, error) {
 			BehindBy: 19, Approvals: 1, Additions: 88, Deletions: 12, Changed: 5,
 			Reviews: []model.Review{{Login: "jchen", State: model.ReviewApproved, SubmittedAt: ago(2 * time.Hour)}},
 			Checks:  checks(15, 0, 0, 0),
+			Comments: []model.Comment{
+				{Author: "jchen", CreatedAt: ago(day(1)), Body: "The ledger already carries a kind column further down the pipeline, so this needs a migration that backfills both or the reconciliation job will disagree with the export."},
+				{Author: "apatel", CreatedAt: ago(6 * time.Hour), Body: "Rebased on master, checks are green again."},
+				{Author: "rmartins", CreatedAt: ago(3 * time.Hour), Body: "Backfill added, ready for another look."},
+			},
+			CommentCount: 7,
+			Commits: []model.Commit{
+				{OID: "a3f91c2", Headline: "Add the category column", CommittedAt: ago(day(8))},
+				{OID: "8b04e77", Headline: "Backfill existing ledger rows", CommittedAt: ago(day(2))},
+				{OID: "1d7c9a0", Headline: "Rebase on master", CommittedAt: ago(day(1))},
+				{OID: "c44e210", Headline: "Drop the redundant index", CommittedAt: ago(5 * time.Hour)},
+				{OID: "90ffe83", Headline: "Reconcile the export fixture", CommittedAt: ago(3 * time.Hour)},
+			},
+			CommitCount: 12,
 		},
 		{
 			Repo: mockRepo, Number: 12012, Title: "Make migrations idempotent",
@@ -129,6 +169,15 @@ func (m *Mock) Fetch(context.Context) (Snapshot, error) {
 			Assignees:          []string{MockViewer},
 			Checks:             checks(11, 0, 0, 4),
 			Labels:             []string{"database"},
+			Comments: []model.Comment{
+				{Author: "tokoro", CreatedAt: ago(45 * time.Minute), Body: "Second run is clean now."},
+			},
+			CommentCount: 1,
+			Commits: []model.Commit{
+				{OID: "7e1b3d4", Headline: "Guard the migration with a version check", CommittedAt: ago(day(6))},
+				{OID: "2fa8c51", Headline: "Make the down migration a no-op", CommittedAt: ago(30 * time.Minute)},
+			},
+			CommitCount: 2,
 		},
 		{
 			Repo: mockRepo, Number: 11959, Title: "Salary band importer",

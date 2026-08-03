@@ -153,6 +153,18 @@ type Review struct {
 	SubmittedAt time.Time
 }
 
+type Comment struct {
+	Author    string
+	Body      string
+	CreatedAt time.Time
+}
+
+type Commit struct {
+	OID         string
+	Headline    string
+	CommittedAt time.Time
+}
+
 type PullRequest struct {
 	Repo      string
 	Number    int
@@ -182,6 +194,11 @@ type PullRequest struct {
 	Changed   int
 
 	Checks []Check
+
+	Comments     []Comment
+	CommentCount int
+	Commits      []Commit
+	CommitCount  int
 }
 
 func (p PullRequest) Age() time.Duration { return time.Since(p.CreatedAt) }

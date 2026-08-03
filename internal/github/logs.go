@@ -12,9 +12,24 @@ import (
 	"github.com/dreuse/prdash/internal/model"
 )
 
-const maxLogLines = 2000
+const (
+	maxLogLines  = 2000
+	maxDiffLines = 2000
+)
 
 var ErrLogsNotReady = errors.New("logs are available once the job finishes")
+
+func diffArgs(pr model.PullRequest) []string {
+	return []string{"pr", "diff", strconv.Itoa(pr.Number), "--repo", pr.Repo, "--color", "never"}
+}
+
+func (c *CLI) Diff(ctx context.Context, pr model.PullRequest) ([]string, error) {
+	out, err := c.run(ctx, pr.Repo, "read pull request diff", diffArgs(pr)...)
+	if err != nil {
+		return nil, err
+	}
+	return headLines(out, maxDiffLines), nil
+}
 
 func logArgs(run model.WorkflowRun, failedOnly bool) []string {
 	mode := "--log"
@@ -35,17 +50,30 @@ func (c *CLI) RunLog(ctx context.Context, run model.WorkflowRun, failedOnly bool
 	return tailLines(out, maxLogLines), nil
 }
 
-func tailLines(out []byte, n int) []string {
+func splitLines(out []byte) []string {
 	trimmed := bytes.TrimRight(out, "\n")
 	if len(trimmed) == 0 {
 		return nil
 	}
 	lines := strings.Split(string(trimmed), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
 	for i, line := range lines {
 		lines[i] = sanitiseLogLine(line)
+	}
+	return lines
+}
+
+func tailLines(out []byte, n int) []string {
+	lines := splitLines(out)
+	if len(lines) > n {
+		return lines[len(lines)-n:]
+	}
+	return lines
+}
+
+func headLines(out []byte, n int) []string {
+	lines := splitLines(out)
+	if len(lines) > n {
+		return lines[:n]
 	}
 	return lines
 }

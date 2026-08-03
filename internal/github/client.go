@@ -32,6 +32,7 @@ type Actor interface {
 	RerunRun(ctx context.Context, run model.WorkflowRun) error
 	UpdateBranch(ctx context.Context, pr model.PullRequest) error
 	RunLog(ctx context.Context, run model.WorkflowRun, failedOnly bool) ([]string, error)
+	Diff(ctx context.Context, pr model.PullRequest) ([]string, error)
 }
 
 const (

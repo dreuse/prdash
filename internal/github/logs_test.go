@@ -34,6 +34,41 @@ func TestLogArgsCanAskForTheWholeLog(t *testing.T) {
 	}
 }
 
+func TestDiffArgsAskGhForTheUnifiedDiff(t *testing.T) {
+	pr := model.PullRequest{Repo: "acme/api", Number: 412}
+	args := strings.Join(diffArgs(pr), " ")
+
+	if !strings.Contains(args, "pr diff") {
+		t.Errorf("the diff comes from gh pr diff, got %q", args)
+	}
+	if !strings.Contains(args, "412") || !strings.Contains(args, "acme/api") {
+		t.Errorf("the number and repo must reach gh, got %q", args)
+	}
+	if !strings.Contains(args, "--color never") {
+		t.Errorf("gh must not colour the patch, we style it ourselves, got %q", args)
+	}
+}
+
+func TestDiffKeepsTheStartOfThePatchNotTheEnd(t *testing.T) {
+	raw := "diff --git a/one.go b/one.go\n@@ -1 +1 @@\n-old\n+new\ntrailing\n"
+	got := headLines([]byte(raw), 2)
+
+	if len(got) != 2 {
+		t.Fatalf("the cap must be honoured, got %d lines", len(got))
+	}
+	if got[0] != "diff --git a/one.go b/one.go" {
+		t.Errorf("a truncated diff must keep its first hunks, got %q", got)
+	}
+}
+
+func TestDiffStripsTerminalEscapes(t *testing.T) {
+	got := headLines([]byte("\x1b[31m-gone\x1b[0m\n"), 10)
+
+	if len(got) != 1 || got[0] != "-gone" {
+		t.Errorf("escapes must not reach the terminal, got %q", got)
+	}
+}
+
 func TestRunLogRefusesRunsStillInProgress(t *testing.T) {
 	c := &CLI{}
 	run := model.WorkflowRun{ID: 1, Repo: "acme/api", Status: "in_progress"}
