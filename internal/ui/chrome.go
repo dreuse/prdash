@@ -84,6 +84,16 @@ func (m Model) renderCIBody(l Layout, height int) string {
 		m.padBody(pane, paneHeight)
 }
 
+func (m Model) splitHeights(l Layout, height int) (board, detail int) {
+	pr, ok := m.selectedPR()
+	if !m.split || !ok {
+		return height, 0
+	}
+	budget := l.SplitDetailHeight(height, m.state.SplitRows)
+	detail = clamp(lipgloss.Height(m.renderSplit(pr, m.width, budget)), 1, budget)
+	return height - detail, detail
+}
+
 func (m Model) renderBoardBody(l Layout, height int) string {
 	pr, ok := m.selectedPR()
 	if !m.split || !ok {
@@ -91,12 +101,17 @@ func (m Model) renderBoardBody(l Layout, height int) string {
 	}
 
 	budget := l.SplitDetailHeight(height, m.state.SplitRows)
-	detail := m.renderSplit(pr, m.width, budget)
-	detailHeight := clamp(lipgloss.Height(detail), 1, budget)
-	boardHeight := height - detailHeight
+	boardHeight, detailHeight := m.splitHeights(l, height)
 
 	return m.padBody(m.renderBoard(boardHeight), boardHeight) + "\n" +
-		m.padBody(detail, detailHeight)
+		m.padBody(m.renderSplit(pr, m.width, budget), detailHeight)
+}
+
+func (m Model) chromeTop() int {
+	if (Layout{Width: m.width, Height: m.height}).ShowFilterBand() {
+		return 2
+	}
+	return 1
 }
 
 func (m Model) clampLines(screen string) string {

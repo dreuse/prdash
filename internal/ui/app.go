@@ -153,6 +153,8 @@ type Model struct {
 	logs           logPane
 	detail         detailPane
 	chord          string
+	lastClick      model.Key
+	lastClickAt    time.Time
 
 	confirm  confirmState
 	panel    settingsUI
@@ -491,6 +493,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	}
 	return m, nil
 }

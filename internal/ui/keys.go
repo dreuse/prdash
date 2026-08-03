@@ -268,6 +268,12 @@ func (k KeyMap) HelpSections(g Glyphs) [][2]string {
 		{shown(k.FailuresOnly), "failures only in the run table, or the log mode when the log has focus"},
 		{"F1..F4", "save the current filter, press again to recall"},
 
+		{"MOUSE", ""},
+		{"click", "select a pull request, or focus the pane you clicked in"},
+		{"double click", "open the pull request in the browser"},
+		{"wheel", "scroll whichever half the pointer is over"},
+		{"", "turn it off in settings to get terminal text selection back"},
+
 		{"KEYS", ""},
 		{"", "rebind anything: \"keys\": {\"diff\": \"D\", \"approve\": \"ctrl+a\"} in settings.json"},
 		{"", strings.Join(ActionNames(), " ")},

@@ -149,6 +149,17 @@ action already owns moves it — bind `split` to `S` and `S` stops opening the s
 `ctrl-c` always quits, whatever the file says. Unknown action names are ignored. The action
 names are listed at the bottom of the `?` screen.
 
+## Mouse
+
+Click a pull request to select it, click it again to open it in the browser. Clicking the
+detail pane focuses it, clicking the board hands focus back, and the wheel scrolls whichever
+half the pointer is over.
+
+Mouse reporting takes the wheel and clicks away from your terminal, so selecting text needs
+the usual modifier — `alt`/`option` in most terminals, `shift` in some. Turn it off in the
+GENERAL section of the settings overlay (`,`), or with `"disable_mouse": true` in
+`settings.json`, and everything stays keyboard-only.
+
 ## Notifications
 
 Everything here is off by default and lives in the NOTIFICATIONS section of the settings

@@ -61,7 +61,8 @@ type Settings struct {
 	StartupFilter string   `json:"startup_filter"`
 	SavedFilters  []string `json:"saved_filters"`
 
-	Keys map[string]string `json:"keys"`
+	DisableMouse bool              `json:"disable_mouse"`
+	Keys         map[string]string `json:"keys"`
 
 	RequiredApprovals int  `json:"required_approvals"`
 	BehindBlocks      bool `json:"behind_blocks"`

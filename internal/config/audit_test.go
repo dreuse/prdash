@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,4 +65,15 @@ func TestAWorldReadableStoreFromAnOlderBuildGetsTightened(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertPrivate(t, base)
+}
+
+func TestAnOldConfigKeepsTheMouseOn(t *testing.T) {
+	var stored Settings
+	body := `{"schema":1,"default_view":"board","refresh_seconds":30}`
+	if err := json.Unmarshal([]byte(body), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.DisableMouse {
+		t.Error("a config written before the mouse existed must not switch it off")
+	}
 }

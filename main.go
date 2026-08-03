@@ -141,7 +141,11 @@ func start(settings config.Settings, fetcher github.Fetcher, actor github.Actor,
 		Cache:     cache,
 		HasCache:  hasCache,
 	})
-	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus()).Run()
+	opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithReportFocus()}
+	if !settings.DisableMouse {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	_, err := tea.NewProgram(m, opts...).Run()
 	return err
 }
 
