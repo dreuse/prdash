@@ -254,7 +254,8 @@ func chromeBg(t Theme) lipgloss.TerminalColor {
 func (m Model) renderFooter() string {
 	t := m.theme
 	keys := m.contextualKeys()
-	right := t.ChromeFaint.Render("? keys")
+	right := t.ChromeDim.Render(",") + t.ChromeFaint.Render(" settings   ") +
+		t.ChromeDim.Render("?") + t.ChromeFaint.Render(" keys")
 
 	bar := ""
 	for {
@@ -323,7 +324,7 @@ func (m Model) contextualKeys() []string {
 
 	pr, ok := m.selectedPR()
 	if !ok {
-		return append(out, m.chip("/", "filter"), m.chip(",", "settings"))
+		return append(out, m.chip("/", "filter"))
 	}
 	if label, busy := m.pending[pr.Key()]; busy {
 		return append(out, t.Warn.Background(chromeBg(t)).Render(m.spinnerFrame()+" "+label))
