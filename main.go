@@ -86,12 +86,6 @@ func run() error {
 		return err
 	}
 
-	notice := update.Notice()
-	defer func() {
-		if msg := notice(); msg != "" {
-			fmt.Fprintln(os.Stderr, msg)
-		}
-	}()
 	return start(settings, fetcher, actor, source, settings.Repos, *view)
 }
 

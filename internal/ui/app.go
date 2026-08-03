@@ -14,6 +14,7 @@ import (
 	"github.com/dreuse/prdash/internal/github"
 	"github.com/dreuse/prdash/internal/model"
 	"github.com/dreuse/prdash/internal/readiness"
+	"github.com/dreuse/prdash/internal/update"
 )
 
 const (
@@ -127,6 +128,9 @@ type Model struct {
 	viewer   string
 	emoji    EmojiSet
 
+	version    string
+	newVersion string
+
 	order   []model.Column
 	lanes   map[model.Column][]model.PullRequest
 	laneIdx int
@@ -187,6 +191,7 @@ func New(o Options) Model {
 		loading:   true,
 		spinnerOn: true,
 		focused:   true,
+		version:   update.Current(),
 		lanes:     map[model.Column][]model.PullRequest{},
 	}
 
@@ -270,7 +275,7 @@ type resetSettingsMsg struct{}
 type emojiMsg struct{ set map[string]string }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.fetchCmd(), m.scheduleTick(), spinnerTick()}
+	cmds := []tea.Cmd{m.fetchCmd(), m.scheduleTick(), spinnerTick(), checkUpdateCmd()}
 	if !m.emojiFresh {
 		cmds = append(cmds, m.fetchEmojiCmd())
 	}
@@ -451,6 +456,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.emoji = NewEmojiSet(msg.set)
 		m.emojiFresh = true
 		return m, saveEmojiCmd(config.EmojiSet{FetchedAt: time.Now(), Emoji: msg.set})
+
+	case updateMsg:
+		m.newVersion = msg.latest
+		return m, m.notify(m.theme.Glyphs.Arrow+" prdash "+msg.latest+" is out, run `prdash --update`", toastInfo)
 
 	case dataMsg:
 		return m.applyData(msg)

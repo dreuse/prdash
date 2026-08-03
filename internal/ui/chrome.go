@@ -264,7 +264,12 @@ func chromeBg(t Theme) lipgloss.TerminalColor {
 func (m Model) renderFooter() string {
 	t := m.theme
 	keys := m.contextualKeys()
-	right := t.ChromeDim.Render(",") + t.ChromeFaint.Render(" settings   ") +
+	version := t.ChromeFaint.Render(m.versionLabel())
+	if m.newVersion != "" {
+		version = t.Warn.Background(chromeBg(t)).Render(m.versionLabel())
+	}
+	right := version + t.ChromeFaint.Render("   ") +
+		t.ChromeDim.Render(",") + t.ChromeFaint.Render(" settings   ") +
 		t.ChromeDim.Render("?") + t.ChromeFaint.Render(" keys")
 
 	bar := ""

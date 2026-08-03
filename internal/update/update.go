@@ -22,7 +22,6 @@ import (
 const (
 	Repo         = "dreuse/prdash"
 	checksumFile = "checksums.txt"
-	checkTimeout = 20 * time.Second
 	ApplyTimeout = 3 * time.Minute
 	devVersion   = "dev"
 )
@@ -50,28 +49,6 @@ func Latest(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("check for updates: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-func Notice() func() string {
-	msgs := make(chan string, 1)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
-		defer cancel()
-		latest, err := Latest(ctx)
-		if err != nil || !Newer(latest, Current()) {
-			msgs <- ""
-			return
-		}
-		msgs <- fmt.Sprintf("prdash %s is out (you have %s) — run `prdash --update`", latest, Current())
-	}()
-	return func() string {
-		select {
-		case msg := <-msgs:
-			return msg
-		default:
-			return ""
-		}
-	}
 }
 
 func Apply(ctx context.Context, tag string) error {
