@@ -11,7 +11,12 @@ import (
 	"github.com/dreuse/prdash/internal/model"
 )
 
-const diffTabStop = "  "
+const (
+	diffTabStop     = "  "
+	diffFileHeader  = "diff --git"
+	minimapWidth    = 2
+	minimapMinWidth = 60
+)
 
 type diffLoadMsg struct{ gen int }
 
@@ -85,15 +90,79 @@ func (m Model) diffBody(rows, width int, hint string) (string, string) {
 	total := len(m.detail.lines)
 	start, end := window(m.detail.scroll, total, rows)
 
+	var cells []string
+	body := width
+	if width >= minimapMinWidth {
+		if cells = minimap(t, m.detail.lines, start, end, rows); cells != nil {
+			body = width - minimapWidth
+		}
+	}
+
 	var b strings.Builder
 	for i := start; i < end; i++ {
 		line := strings.ReplaceAll(m.detail.lines[i], "\t", diffTabStop)
-		b.WriteString(diffLineStyle(t, m.detail.lines[i]).Render(" " + truncate(line, maxInt(1, width-1))))
+		row := diffLineStyle(t, m.detail.lines[i]).Render(" " + truncate(line, maxInt(1, body-1)))
+		if cells != nil {
+			row = padStyled(row, body) + " " + cells[i-start]
+		}
+		b.WriteString(row)
 		if i < end-1 {
 			b.WriteString("\n")
 		}
 	}
 	return b.String(), scrollIndicator(t, end, total) + hint
+}
+
+func minimap(t Theme, lines []string, start, end, rows int) []string {
+	total := len(lines)
+	if total <= rows || rows < 1 {
+		return nil
+	}
+
+	cells := make([]string, rows)
+	for r := range cells {
+		from, to := r*total/rows, maxInt((r+1)*total/rows, r*total/rows+1)
+		adds, dels := 0, 0
+		for _, line := range lines[from:minInt(to, total)] {
+			switch {
+			case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"):
+			case strings.HasPrefix(line, "+"):
+				adds++
+			case strings.HasPrefix(line, "-"):
+				dels++
+			}
+		}
+
+		glyph := t.Glyphs.Track
+		if from < end && to > start {
+			glyph = t.Glyphs.Thumb
+		}
+		cells[r] = minimapStyle(t, adds, dels).Render(glyph)
+	}
+	return cells
+}
+
+func minimapStyle(t Theme, adds, dels int) lipgloss.Style {
+	switch {
+	case adds > 0 && dels > 0:
+		return t.Accent
+	case adds > 0:
+		return t.OK
+	case dels > 0:
+		return t.Danger
+	}
+	return t.Faint
+}
+
+func diffFileAt(lines []string, at int) string {
+	for i := minInt(at, len(lines)-1); i >= 0; i-- {
+		if !strings.HasPrefix(lines[i], diffFileHeader) {
+			continue
+		}
+		_, path, _ := strings.Cut(lines[i], " b/")
+		return path
+	}
+	return ""
 }
 
 func linesStarting(lines []string, prefix string) []int {
@@ -158,7 +227,7 @@ func (m Model) jumpFile(delta int) (tea.Model, tea.Cmd) {
 	if !m.split || !m.detail.focus {
 		return m, nil
 	}
-	return m.jumpBy("diff --git", delta)
+	return m.jumpBy(diffFileHeader, delta)
 }
 
 func (m Model) jumpHunk(delta int) (tea.Model, tea.Cmd) {

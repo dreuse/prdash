@@ -467,6 +467,126 @@ func TestJumpingStopsAtTheEndsInsteadOfWrapping(t *testing.T) {
 	}
 }
 
+func paneHeader(t *testing.T, m Model) string {
+	t.Helper()
+	for _, line := range strings.Split(stripANSI(m.View()), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "DIFF") {
+			return line
+		}
+	}
+	t.Fatalf("no diff header on screen:\n%s", stripANSI(m.View()))
+	return ""
+}
+
+func TestTheDiffHeaderNamesTheFileUnderTheCursor(t *testing.T) {
+	m := focusedDiff(t, 200, 40, 12009)
+
+	if head := paneHeader(t, m); !strings.Contains(head, "internal/ledger/entry.go") {
+		t.Errorf("the header should name the first file: %q", head)
+	}
+
+	m = send(m, "]", "c")
+	head := paneHeader(t, m)
+	if !strings.Contains(head, "internal/ledger/file0.go") {
+		t.Errorf("]c should move the header to the next file: %q", head)
+	}
+	if strings.Contains(head, "entry.go") {
+		t.Errorf("the previous file should be gone from the header: %q", head)
+	}
+}
+
+func diffRows(t *testing.T, m Model) []string {
+	t.Helper()
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "DIFF") {
+			return lines[i+1 : minInt(i+1+m.detailRows(), len(lines))]
+		}
+	}
+	t.Fatalf("no diff on screen:\n%s", stripANSI(m.View()))
+	return nil
+}
+
+func lastColumn(rows []string) string {
+	var b strings.Builder
+	for _, row := range rows {
+		if r := []rune(row); len(r) > 0 {
+			b.WriteString(string(r[len(r)-1]))
+		}
+	}
+	return b.String()
+}
+
+func TestALongDiffGetsAMinimapDownItsRightEdge(t *testing.T) {
+	m := focusedDiff(t, 200, 40, 12009)
+	g := m.theme.Glyphs
+
+	col := lastColumn(diffRows(t, m))
+	if !strings.Contains(col, g.Thumb) {
+		t.Errorf("the visible window should be marked on the minimap, got %q", col)
+	}
+	if !strings.Contains(col, g.Track) {
+		t.Errorf("the rest of the diff should be on the minimap too, got %q", col)
+	}
+
+	m = send(m, "G")
+	if bottom := lastColumn(diffRows(t, m)); strings.Index(bottom, g.Thumb) <= strings.Index(col, g.Thumb) {
+		t.Errorf("the marker should follow the scroll down, %q then %q", col, bottom)
+	}
+}
+
+func TestAShortDiffGetsNoMinimap(t *testing.T) {
+	m, _ := splitScreen(t, 200, 40, 12009)
+	m = send(m, "tab", "d")
+	pr, _ := m.selectedPR()
+	out, _ := m.Update(diffMsg{key: pr.Key(), lines: []string{"@@ -1 +1 @@", "-old", "+new"}})
+	m = out.(Model)
+
+	if col := lastColumn(diffRows(t, m)); strings.Contains(col, m.theme.Glyphs.Thumb) {
+		t.Errorf("a diff that fits needs no map of itself, got %q", col)
+	}
+}
+
+func TestLeftAndRightWalkTheFilesOfADiff(t *testing.T) {
+	m := focusedDiff(t, 200, 40, 12009)
+	heads := linesWithPrefix(m.detail.lines, "diff --git")
+
+	m = send(m, "l")
+	if m.detail.scroll != heads[1] {
+		t.Errorf("l should land on the second file at %d, landed on %d", heads[1], m.detail.scroll)
+	}
+	m = send(m, "h")
+	if m.detail.scroll != heads[0] {
+		t.Errorf("h should go back to %d, landed on %d", heads[0], m.detail.scroll)
+	}
+}
+
+func TestLeftAndRightStillChangeLaneFromTheOverviewPane(t *testing.T) {
+	m, _ := splitScreen(t, 200, 40, 12009)
+	m = send(m, "tab")
+
+	before := m.detail.scroll
+	m = send(m, "l")
+	if m.detail.scroll != before {
+		t.Errorf("the overview pane has no files to walk, scroll moved to %d", m.detail.scroll)
+	}
+}
+
+func TestTheDiffHintNamesTheFileKeysNotTab(t *testing.T) {
+	m := focusedDiff(t, 200, 40, 12009)
+
+	head := paneHeader(t, m)
+	if !strings.Contains(head, m.theme.Glyphs.LeftRight+" file") {
+		t.Errorf("the focused diff should advertise the file keys: %q", head)
+	}
+	if strings.Contains(head, "tab "+m.theme.Glyphs.LeftRight) {
+		t.Errorf("tab switches pane, it does not move sideways: %q", head)
+	}
+	if !strings.Contains(head, "tab pane") {
+		t.Errorf("the hint should say what tab really does: %q", head)
+	}
+}
+
 func TestBracesJumpBlockToBlockInTheOverview(t *testing.T) {
 	m, _ := splitScreen(t, 80, 24, 12009)
 	m = send(m, "tab", "}")

@@ -44,27 +44,36 @@ func (m Model) renderSplit(pr model.PullRequest, width, height int) string {
 	rows := maxInt(1, height-detailChromeRows)
 	body, indicator := m.detailBody(pr, rows, width)
 
-	head := fillLine(spread(width, m.detailLabel(pr), indicator), width)
+	head := fillLine(spread(width, m.detailLabel(pr, width-lipgloss.Width(indicator)-1), indicator), width)
 	if m.detail.focus {
 		head = t.Selected.Render(head)
 	}
 	return t.HorizontalRule(width) + "\n" + head + "\n" + body
 }
 
-func (m Model) detailLabel(pr model.PullRequest) string {
+func (m Model) detailLabel(pr model.PullRequest, width int) string {
 	t := m.theme
-	label := "DETAILS"
-	if m.detail.diff {
-		label = "DIFF"
+	if !m.detail.diff {
+		return t.Faint.Render("DETAILS") + " " + t.Accent.Render("#"+itoa(pr.Number))
 	}
-	return t.Faint.Render(label) + " " + t.Accent.Render("#"+itoa(pr.Number))
+
+	head := t.Faint.Render("DIFF") + " " + t.Accent.Render("#"+itoa(pr.Number))
+	file := diffFileAt(m.detail.lines, m.detail.scroll)
+	if file == "" {
+		return head
+	}
+	return head + "  " + t.Strong.Render(truncate(file, maxInt(1, width-lipgloss.Width(head)-2)))
 }
 
 func (m Model) detailBody(pr model.PullRequest, rows, width int) (string, string) {
 	t := m.theme
-	hint := t.Faint.Render("tab " + t.Glyphs.LeftRight)
+	hint := t.Faint.Render("tab pane")
 	if m.detail.focus {
-		hint = t.Accent.Render("focused") + t.Faint.Render("  "+t.Glyphs.UpDown+" scroll  tab "+t.Glyphs.LeftRight)
+		keys := t.Glyphs.UpDown + " scroll"
+		if m.detail.diff {
+			keys += "  " + t.Glyphs.LeftRight + " file"
+		}
+		hint = t.Accent.Render("focused") + t.Faint.Render("  "+keys+"  tab pane")
 	}
 
 	if m.detail.diff {
@@ -131,6 +140,10 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.jumpHunk(1)
 	case key.Matches(msg, k.PrevHunk):
 		return m.jumpHunk(-1)
+	case m.detail.diff && key.Matches(msg, k.Right):
+		return m.jumpFile(1)
+	case m.detail.diff && key.Matches(msg, k.Left):
+		return m.jumpFile(-1)
 	}
 
 	rows := m.detailRows()

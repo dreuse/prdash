@@ -131,7 +131,9 @@ what the lane is deciding.
 Motions follow vi: `j` `k` `h` `l` to move, `gg` and `G` for the ends, `ctrl-d` / `ctrl-u` for
 half a page, `ctrl-f` / `ctrl-b` for a full one. `tab` moves into the detail pane and back,
 `+` and `-` resize it, and the size is remembered. Inside a diff, `}` and `{` step through
-hunks and `]c` / `[c` through files. Press `?` for the full list, which always shows the keys
+hunks and `h` / `l` (or `]c` / `[c`) through files, with the current file named in the pane
+header and a minimap of the whole patch down the right edge. Press `?` for the full list,
+which always shows the keys
 that are actually bound.
 
 Any action can be rebound from `keys` in `settings.json`:

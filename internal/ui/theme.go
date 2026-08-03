@@ -20,6 +20,8 @@ type Glyphs struct {
 	Selected  string
 	Expand    string
 	LaneRule  string
+	Thumb     string
+	Track     string
 	HRule     string
 	Dot       string
 	Arrow     string
@@ -43,6 +45,8 @@ var unicodeGlyphs = Glyphs{
 	Selected:  "▸",
 	Expand:    "▾",
 	LaneRule:  "▌",
+	Thumb:     "█",
+	Track:     "│",
 	HRule:     "─",
 	Dot:       "·",
 	Arrow:     "→",
@@ -65,6 +69,8 @@ var asciiGlyphs = Glyphs{
 	Selected:  ">",
 	Expand:    "v",
 	LaneRule:  "|",
+	Thumb:     "#",
+	Track:     "|",
 	HRule:     "-",
 	Dot:       "-",
 	Arrow:     "->",

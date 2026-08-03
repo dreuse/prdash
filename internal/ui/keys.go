@@ -240,7 +240,7 @@ func (k KeyMap) HelpSections(g Glyphs) [][2]string {
 		{shown(k.PageDown, k.PageUp), "a full page down / up"},
 		{"ctrl-e ctrl-y", "one line down / up, the same as j and k here"},
 		{shown(k.NextHunk, k.PrevHunk), "next / previous hunk in the diff, block in the overview"},
-		{"]c [c", "next / previous file in the diff"},
+		{shown(k.Left, k.Right) + " " + g.LeftRight + " ]c [c", "next / previous file in the diff"},
 		{shown(k.Focus), "move into the detail pane (board) or the log pane (ci), and back"},
 		{shown(k.SplitGrow, k.SplitShrink), "grow or shrink the detail pane, the size is remembered"},
 		{shown(k.Expand), "expand or collapse the section under the cursor (board)"},
