@@ -16,6 +16,24 @@ existing `gh` credentials and never handles tokens itself.
 gh auth login
 ```
 
+### Install script
+
+macOS and Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dreuse/prdash/main/install.sh | sh
+```
+
+Windows:
+
+```powershell
+irm https://raw.githubusercontent.com/dreuse/prdash/main/install.ps1 | iex
+```
+
+Both download the release for your platform, check it against `checksums.txt`, and drop
+the binary in `~/.local/bin` (`%LOCALAPPDATA%\prdash\bin` on Windows). Set
+`PRDASH_INSTALL_DIR` to install elsewhere, or `PRDASH_VERSION=v0.1.0` to pin a release.
+
 ### Download a release
 
 Grab the archive for your platform from the [releases page](../../releases), verify it
@@ -42,6 +60,20 @@ cd prdash
 go build -o prdash .
 ```
 
+### Keep it updated
+
+`prdash` checks for a newer release in the background and prints a one-line notice when
+you quit. Install it over the running binary with:
+
+```sh
+prdash --update
+prdash --version
+```
+
+The download goes through `gh` and is checked against the release `checksums.txt` before
+anything is replaced. If you installed with `go install` or a package manager, update the
+same way you installed instead.
+
 ### Run it
 
 First run asks for a repository and a default view, then goes straight into the dashboard.
@@ -56,3 +88,24 @@ prdash --mock                         # explore the ui without credentials
 
 `NO_COLOR=1` and light-background terminals are both supported; no information is carried
 by colour alone.
+
+## Notifications
+
+Everything here is off by default and lives in the NOTIFICATIONS section of the settings
+overlay (`,`). Alerts go out through `osascript` on macOS, `notify-send` on Linux, and an
+OSC 9 escape everywhere else.
+
+| Setting | Fires when |
+| --- | --- |
+| Runs that finish | a workflow run lands — `failures` or `all` |
+| Reviews | someone approves or requests changes |
+| Ready to merge | a pull request clears every check and approval |
+| Handed to you | you are assigned or your review is requested |
+
+`Scope` narrows the first three: `any` pull request, `mine` for the ones you opened or were
+assigned, `authored` for only the ones you opened. "Handed to you" ignores the scope, since
+work arriving from someone else is the point. Under `mine` and `authored`, runs with no pull
+request behind them — a push to `main`, a nightly job — stay silent.
+
+Notifications need prdash to be running. With any of them on it keeps polling at the normal
+interval instead of backing off to five minutes when the terminal loses focus.
