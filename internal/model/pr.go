@@ -195,10 +195,9 @@ type PullRequest struct {
 
 	Checks []Check
 
-	Comments     []Comment
-	CommentCount int
-	Commits      []Commit
-	CommitCount  int
+	Comments    []Comment
+	Commits     []Commit
+	CommitCount int
 }
 
 func (p PullRequest) Age() time.Duration { return time.Since(p.CreatedAt) }

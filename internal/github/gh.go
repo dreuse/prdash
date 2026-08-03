@@ -20,8 +20,14 @@ const (
 	runsPerRepo        = 20
 	compareBatchSize   = 50
 	maxConcurrentRepos = 4
-	maxCommentChars    = 240
+	maxCommentChars    = 600
+	botTypename        = "Bot"
+	botLoginSuffix     = "[bot]"
 )
+
+func isBot(login, typename string) bool {
+	return typename == botTypename || strings.HasSuffix(login, botLoginSuffix)
+}
 
 func flattenComment(body string) string {
 	flat := strings.Join(strings.Fields(body), " ")
@@ -209,12 +215,12 @@ type graphQLPRResponse struct {
 						} `json:"nodes"`
 					} `json:"latestOpinionatedReviews"`
 					Comments struct {
-						TotalCount int `json:"totalCount"`
-						Nodes      []struct {
+						Nodes []struct {
 							BodyText  string `json:"bodyText"`
 							CreatedAt string `json:"createdAt"`
 							Author    struct {
-								Login string `json:"login"`
+								Login    string `json:"login"`
+								Typename string `json:"__typename"`
 							} `json:"author"`
 						} `json:"nodes"`
 					} `json:"comments"`
@@ -331,8 +337,10 @@ func (c *CLI) fetchPRs(ctx context.Context, repo Repo) ([]model.PullRequest, rep
 			}
 			pr.Reviews = append(pr.Reviews, review)
 		}
-		pr.CommentCount = n.Comments.TotalCount
 		for _, c := range n.Comments.Nodes {
+			if isBot(c.Author.Login, c.Author.Typename) {
+				continue
+			}
 			pr.Comments = append(pr.Comments, model.Comment{
 				Author:    c.Author.Login,
 				Body:      flattenComment(c.BodyText),

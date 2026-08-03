@@ -12,15 +12,13 @@ import (
 )
 
 const (
-	passedChecks      = "checks"
-	detailTwoColumn   = 140
-	detailColumnGap   = 4
-	maxDetailComments = 3
-	maxDetailCommits  = 5
-	commentBodyLines  = 2
-	commentGutter     = 2
-	oidWidth          = 7
-	detailChromeRows  = 2
+	passedChecks     = "checks"
+	detailTwoColumn  = 140
+	detailColumnGap  = 4
+	maxDetailCommits = 5
+	commentGutter    = 2
+	oidWidth         = 7
+	detailChromeRows = 2
 )
 
 type detailPane struct {
@@ -224,19 +222,15 @@ func (m Model) detailCommits(pr model.PullRequest, width int) string {
 func (m Model) detailComments(pr model.PullRequest, width int) string {
 	t := m.theme
 	var b strings.Builder
-	b.WriteString(t.Faint.Render("COMMENTS") + " " + t.Strong.Render(itoa(pr.CommentCount)))
+	b.WriteString(t.Faint.Render("COMMENTS") + " " + t.Strong.Render(itoa(len(pr.Comments))))
 
 	if len(pr.Comments) == 0 {
 		b.WriteString("\n" + t.Faint.Render("no comments yet"))
 		return b.String()
 	}
 
-	shown := pr.Comments
-	if len(shown) > maxDetailComments {
-		shown = shown[len(shown)-maxDetailComments:]
-	}
-	for i := len(shown) - 1; i >= 0; i-- {
-		c := shown[i]
+	for i := len(pr.Comments) - 1; i >= 0; i-- {
+		c := pr.Comments[i]
 		who := c.Author
 		if strings.EqualFold(who, m.viewer) {
 			who = "you"
@@ -258,11 +252,7 @@ func wrapBody(style lipgloss.Style, body string, width int) []string {
 	if strings.TrimSpace(body) == "" {
 		return nil
 	}
-	lines := strings.Split(style.Width(width).Render(body), "\n")
-	if len(lines) > commentBodyLines {
-		lines = lines[:commentBodyLines]
-	}
-	return lines
+	return strings.Split(style.Width(width).Render(body), "\n")
 }
 
 func (m Model) detailHeader(pr model.PullRequest, width int) string {

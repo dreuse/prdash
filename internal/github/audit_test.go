@@ -88,6 +88,27 @@ func TestPullRequestQueryAsksForCommentsAndRecentCommits(t *testing.T) {
 	if !strings.Contains(pullRequestQuery, "commits(last: 1)") {
 		t.Error("the check rollup must stay on a single commit, or every PR costs 5x the contexts")
 	}
+	if !strings.Contains(pullRequestQuery, "__typename") {
+		t.Error("bots can only be told apart from people by the author typename")
+	}
+}
+
+func TestBotChatterIsDroppedBeforeItReachesTheDetailPane(t *testing.T) {
+	cases := []struct {
+		login    string
+		typename string
+		bot      bool
+	}{
+		{"dependabot[bot]", "Bot", true},
+		{"github-actions[bot]", "User", true},
+		{"sonarcloud", "Bot", true},
+		{"rita", "User", false},
+	}
+	for _, c := range cases {
+		if got := isBot(c.login, c.typename); got != c.bot {
+			t.Errorf("%s (%s): got bot=%v want %v", c.login, c.typename, got, c.bot)
+		}
+	}
 }
 
 func TestCommentsAndCommitsDecodeFromTheResponse(t *testing.T) {
@@ -104,7 +125,7 @@ func TestCommentsAndCommitsDecodeFromTheResponse(t *testing.T) {
 	}
 
 	node := resp.Data.Repository.PullRequests.Nodes[0]
-	if node.Comments.TotalCount != 7 || len(node.Comments.Nodes) != 1 {
+	if len(node.Comments.Nodes) != 1 {
 		t.Fatalf("comments must decode, got %+v", node.Comments)
 	}
 	if got := node.Comments.Nodes[0].Author.Login; got != "rita" {

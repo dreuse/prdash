@@ -150,7 +150,6 @@ func (m *Mock) Fetch(context.Context) (Snapshot, error) {
 				{Author: "apatel", CreatedAt: ago(6 * time.Hour), Body: "Rebased on master, checks are green again."},
 				{Author: "rmartins", CreatedAt: ago(3 * time.Hour), Body: "Backfill added, ready for another look."},
 			},
-			CommentCount: 7,
 			Commits: []model.Commit{
 				{OID: "a3f91c2", Headline: "Add the category column", CommittedAt: ago(day(8))},
 				{OID: "8b04e77", Headline: "Backfill existing ledger rows", CommittedAt: ago(day(2))},
@@ -172,7 +171,6 @@ func (m *Mock) Fetch(context.Context) (Snapshot, error) {
 			Comments: []model.Comment{
 				{Author: "tokoro", CreatedAt: ago(45 * time.Minute), Body: "Second run is clean now."},
 			},
-			CommentCount: 1,
 			Commits: []model.Commit{
 				{OID: "7e1b3d4", Headline: "Guard the migration with a version check", CommittedAt: ago(day(6))},
 				{OID: "2fa8c51", Headline: "Make the down migration a no-op", CommittedAt: ago(30 * time.Minute)},

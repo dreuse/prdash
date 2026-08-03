@@ -63,14 +63,48 @@ func TestSplitPaneShowsRecentCommentsAndCommits(t *testing.T) {
 	}
 }
 
-func TestTheCommentAndCommitBlocksCountWhatTheyDoNotShow(t *testing.T) {
+func TestTheCommitBlockCountsWhatItDoesNotShow(t *testing.T) {
 	_, out := splitScreen(t, 200, 50, 12009)
 
-	if !strings.Contains(out, "COMMENTS 7") {
-		t.Errorf("the total comment count must be visible, not just the last few:\n%s", out)
-	}
 	if !strings.Contains(out, "COMMITS 12") || !strings.Contains(out, "+7 more") {
 		t.Errorf("a truncated commit list must say how many it left out:\n%s", out)
+	}
+}
+
+func TestEveryCommentIsListedNotJustTheLastFew(t *testing.T) {
+	m, _ := splitScreen(t, 200, 50, 12009)
+	pr, ok := m.selectedPR()
+	if !ok {
+		t.Fatal("no pull request selected")
+	}
+
+	pr.Comments = nil
+	for i := 0; i < 6; i++ {
+		pr.Comments = append(pr.Comments, model.Comment{Author: "dev" + itoa(i), Body: "note " + itoa(i)})
+	}
+
+	block := stripANSI(m.detailComments(pr, 60))
+	if !strings.Contains(block, "COMMENTS 6") {
+		t.Errorf("the header must count the comments it lists:\n%s", block)
+	}
+	for i := 0; i < 6; i++ {
+		if !strings.Contains(block, "dev"+itoa(i)) {
+			t.Errorf("comment from dev%d is missing:\n%s", i, block)
+		}
+	}
+}
+
+func TestALongCommentKeepsItsWholeBody(t *testing.T) {
+	m, _ := splitScreen(t, 200, 50, 12009)
+	pr, ok := m.selectedPR()
+	if !ok {
+		t.Fatal("no pull request selected")
+	}
+	pr.Comments = []model.Comment{{Author: "rita", Body: strings.Repeat("word ", 60) + "tail"}}
+
+	block := stripANSI(m.detailComments(pr, 40))
+	if !strings.Contains(block, "tail") {
+		t.Errorf("a comment must be readable in full, not clipped to a teaser:\n%s", block)
 	}
 }
 
@@ -95,11 +129,26 @@ func TestTheSplitPaneScrollsWhenItsContentDoesNotFit(t *testing.T) {
 	if before == after {
 		t.Fatalf("a pane too short for its content must scroll:\n%s", after)
 	}
-	if strings.Contains(before, "COMMENTS") {
+	if strings.Contains(before, "reconciliation") {
 		t.Fatal("the fixture must be taller than the pane, or there is nothing to scroll to")
 	}
-	if !strings.Contains(after, "COMMENTS") {
-		t.Errorf("scrolling to the end should reach the last block:\n%s", after)
+	if !strings.Contains(after, "reconciliation") {
+		t.Errorf("scrolling to the end should reach the oldest comment:\n%s", after)
+	}
+}
+
+func TestUpAndDownScrollTheFocusedPaneOneLineAtATime(t *testing.T) {
+	m, _ := splitScreen(t, 80, 24, 12009)
+	m = send(m, "tab")
+
+	m = send(m, "down")
+	m = send(m, "down")
+	if m.detail.scroll != 2 {
+		t.Fatalf("down must scroll the pane, got %d", m.detail.scroll)
+	}
+	m = send(m, "up")
+	if m.detail.scroll != 1 {
+		t.Errorf("up must scroll the pane back, got %d", m.detail.scroll)
 	}
 }
 

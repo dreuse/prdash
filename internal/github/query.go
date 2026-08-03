@@ -45,9 +45,8 @@ query($owner: String!, $name: String!, $limit: Int!) {
         latestOpinionatedReviews(first: 50) {
           nodes { state submittedAt author { login } }
         }
-        comments(last: 3) {
-          totalCount
-          nodes { bodyText createdAt author { login } }
+        comments(last: 30) {
+          nodes { bodyText createdAt author { login __typename } }
         }
         recentCommits: commits(last: 5) {
           totalCount
