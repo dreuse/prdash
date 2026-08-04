@@ -18,39 +18,17 @@ func Send(title, body string) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
-	defer cancel()
+	if runtime.GOOS == "linux" {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
 
-	switch runtime.GOOS {
-	case "darwin":
-		if bin, err := exec.LookPath("osascript"); err == nil {
-			for _, script := range darwinScripts(title, body) {
-				if exec.CommandContext(ctx, bin, "-e", script).Run() == nil {
-					return
-				}
-			}
-		}
-	case "linux":
 		if bin, err := exec.LookPath("notify-send"); err == nil {
 			if exec.CommandContext(ctx, bin, linuxArgs(title, body)...).Run() == nil {
 				return
 			}
 		}
 	}
-	terminal(title, body)
-}
-
-var terminalBundles = map[string]string{
-	"Apple_Terminal": "com.apple.Terminal",
-	"iTerm.app":      "com.googlecode.iterm2",
-	"ghostty":        "com.mitchellh.ghostty",
-	"WezTerm":        "com.github.wez.wezterm",
-	"Hyper":          "co.zeit.hyper",
-	"Tabby":          "org.tabby",
-	"vscode":         "com.microsoft.VSCode",
-	"kitty":          "net.kovidgoyal.kitty",
-	"alacritty":      "org.alacritty",
-	"rio":            "com.raphaelamorim.rio",
+	fmt.Fprint(os.Stderr, osc9(title, body))
 }
 
 var terminalDesktopEntries = map[string]string{
@@ -63,22 +41,6 @@ var terminalDesktopEntries = map[string]string{
 	"rio":       "rio",
 }
 
-func hostBundleID() string {
-	if id := strings.TrimSpace(os.Getenv("__CFBundleIdentifier")); id != "" {
-		return id
-	}
-	return terminalBundles[os.Getenv("TERM_PROGRAM")]
-}
-
-func darwinScripts(title, body string) []string {
-	plain := fmt.Sprintf("display notification %s with title %s", quote(body), quote(title))
-	id := hostBundleID()
-	if id == "" {
-		return []string{plain}
-	}
-	return []string{fmt.Sprintf("tell application id %s to %s", quote(id), plain), plain}
-}
-
 func linuxArgs(title, body string) []string {
 	args := []string{"--app-name=prdash"}
 	if entry := terminalDesktopEntries[os.Getenv("TERM_PROGRAM")]; entry != "" {
@@ -87,13 +49,8 @@ func linuxArgs(title, body string) []string {
 	return append(args, title, body)
 }
 
-func terminal(title, body string) {
-	text := strings.TrimSpace(title + " " + body)
-	fmt.Fprintf(os.Stderr, "\x1b]9;%s\x07", text)
-}
-
-func quote(s string) string {
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+func osc9(title, body string) string {
+	return fmt.Sprintf("\x1b]9;%s\x07", strings.TrimSpace(title+" "+body))
 }
 
 func sanitise(s string) string {

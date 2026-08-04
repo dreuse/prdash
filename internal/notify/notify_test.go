@@ -6,52 +6,11 @@ import (
 	"testing"
 )
 
-func TestTheMacNotificationIsAttributedToTheHostTerminal(t *testing.T) {
-	t.Setenv("__CFBundleIdentifier", "com.googlecode.iterm2")
-	scripts := darwinScripts("CI failed", "on feature/login")
+func TestTheMacNotificationComesFromTheTerminalItself(t *testing.T) {
+	got := osc9("CI failed", "on feature/login")
 
-	if len(scripts) != 2 {
-		t.Fatalf("we need the attributed script and a plain fallback, got %d", len(scripts))
-	}
-	if !strings.HasPrefix(scripts[0], `tell application id "com.googlecode.iterm2" to `) {
-		t.Errorf("the terminal must own the notification so clicking it comes back here, got %s", scripts[0])
-	}
-	if !strings.Contains(scripts[0], `display notification "on feature/login" with title "CI failed"`) {
-		t.Errorf("the text must survive the wrapping, got %s", scripts[0])
-	}
-	if strings.Contains(scripts[1], "tell application") {
-		t.Errorf("the fallback must not name an app, got %s", scripts[1])
-	}
-}
-
-func TestTermProgramNamesTheBundleWhenLaunchServicesDidNot(t *testing.T) {
-	t.Setenv("__CFBundleIdentifier", "")
-	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
-
-	if got := hostBundleID(); got != "com.apple.Terminal" {
-		t.Errorf("Terminal.app should be recognised, got %q", got)
-	}
-}
-
-func TestAnUnknownTerminalStillGetsANotification(t *testing.T) {
-	t.Setenv("__CFBundleIdentifier", "")
-	t.Setenv("TERM_PROGRAM", "some-terminal-nobody-has-heard-of")
-
-	scripts := darwinScripts("CI failed", "on main")
-	if len(scripts) != 1 {
-		t.Fatalf("with no app to name there is nothing to fall back from, got %d", len(scripts))
-	}
-	if strings.Contains(scripts[0], "tell application") {
-		t.Errorf("an unknown terminal must not be guessed at, got %s", scripts[0])
-	}
-}
-
-func TestABundleIdCannotBreakOutOfTheScript(t *testing.T) {
-	t.Setenv("__CFBundleIdentifier", `x" to do shell script "touch /tmp/pwned`)
-	scripts := darwinScripts("t", "b")
-
-	if strings.Contains(scripts[0], `to do shell script "touch`) {
-		t.Errorf("a hostile bundle id must stay inside its string literal, got %s", scripts[0])
+	if got != "\x1b]9;CI failed on feature/login\x07" {
+		t.Errorf("clicking it must focus the terminal that posted it, got %q", got)
 	}
 }
 
@@ -85,14 +44,6 @@ func contains(args []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func TestQuoteKeepsAppleScriptFromBreakingOut(t *testing.T) {
-	got := quote(`say "hi" \ now`)
-	want := `"say \"hi\" \\ now"`
-	if got != want {
-		t.Errorf("a run title with quotes must stay one argument, got %s", got)
-	}
 }
 
 func TestSanitiseDropsControlCharacters(t *testing.T) {
